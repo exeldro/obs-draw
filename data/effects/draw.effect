@@ -1,0 +1,151 @@
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 uv_size;
+uniform bool draw_mouse;
+uniform float2 uv_mouse;
+uniform float2 uv_mouse_previous;
+uniform float4 mouse_color;
+uniform float mouse_size;
+uniform int tool;
+uniform float4 tool_color;
+uniform float tool_size;
+uniform bool tool_down;
+
+sampler_state def_sampler {
+	Filter   =
+Linear;
+	AddressU = Clamp;
+	AddressV =
+Clamp;
+};
+
+struct VertInOut
+{
+	float4 pos : POSITION;
+	float2 uv : TEXCOORD0;
+};
+
+VertInOut VSDefault(VertInOut vert_in)
+{
+	VertInOut vert_out;
+	vert_out.pos = mul(float4(vert_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv = vert_in.uv;
+	return vert_out;
+}
+
+float4 apply_color(float4 color, float4 orig)
+{
+	if (color.a == 0.0)
+		return orig;
+	if(color.a < 0.0)
+		return float4(lerp(orig.rgb, color.rgb, (1.0 + color.a) / ((1.0 + color.a) + orig.a)), min((1.0 + color.a), orig.a));
+		//return float4(0, 0, 0, 0);
+		//return float4(orig.rgb * (1.0 + color.a), min((1.0 + color.a), orig.a));
+
+	return float4(lerp(orig.rgb, color.rgb, color.a / (color.a + orig.a)), max(color.a, orig.a));
+}
+
+float4 draw_line(float2 coord, float2 from, float2 to, float4 color, float distance_factor, float4 orig)
+{
+	float d = distance(coord, to);
+	float effective_alpha = 0.0;
+	if (d <= tool_size)
+	{
+		effective_alpha = color.a - (color.a * (d / tool_size) * distance_factor);
+	}
+	if (from.x >= 0.0 && from.y >= 0.0)
+	{
+		float2 lineDir = from - to;
+		float2 perpDir = float2(lineDir.y, -lineDir.x);
+		float2 dirToPt1 = to - coord;
+		float ld = abs(dot(normalize(perpDir), dirToPt1));
+		if (ld <= tool_size)
+		{
+			float dp = distance(coord, from);
+			if (dp <= tool_size)
+			{
+				if (color.a < 0.0)
+					effective_alpha = min(color.a - (color.a * (dp / tool_size) * distance_factor), effective_alpha);
+				else
+					effective_alpha = max(color.a - (color.a * (dp / tool_size) * distance_factor), effective_alpha);
+			}
+			float md = distance(from, to);
+			if (dp < md && d < md)
+			{
+				if (color.a < 0.0)
+					effective_alpha = min(color.a - (color.a * (ld / tool_size) * distance_factor), effective_alpha);
+				else
+					effective_alpha = max(color.a - (color.a * (ld / tool_size) * distance_factor), effective_alpha);
+			}
+		}
+	}
+	return apply_color(float4(color.rgb, effective_alpha), orig);
+}
+
+float4 PSDraw(VertInOut vert_in) : TARGET
+{
+	float4 orig = image.Sample(def_sampler, vert_in.uv);
+	float2 coord = vert_in.uv * uv_size;
+	if (draw_mouse)
+	{
+		float d = distance(coord, uv_mouse);
+		if (d < mouse_size)
+			return mouse_color;
+	}
+	if (tool_down)
+	{
+		if (tool == 1) // pencil
+		{
+			return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 0.0, orig);
+		}
+		else if (tool == 2) // brush
+		{
+			return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 1.0, orig);
+		}
+		else if (tool == 3)//line
+		{
+			return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 0.0, orig);
+		}
+		else if (tool == 4) // rectangle outline
+		{
+			orig = draw_line(coord, uv_mouse_previous, float2(uv_mouse_previous.x, uv_mouse.y), tool_color, 0.0, orig);
+			orig = draw_line(coord, float2(uv_mouse_previous.x, uv_mouse.y), uv_mouse, tool_color, 0.0, orig);
+			orig = draw_line(coord, uv_mouse, float2(uv_mouse.x, uv_mouse_previous.y), tool_color, 0.0, orig);
+			orig = draw_line(coord, float2(uv_mouse.x, uv_mouse_previous.y), uv_mouse_previous, tool_color, 0.0, orig);
+			return orig;
+		}
+		else if (tool == 5) // rectangle
+		{
+			if (all(coord >= min(uv_mouse, uv_mouse_previous)) && all(coord <= max(uv_mouse, uv_mouse_previous)))
+				return apply_color(tool_color, orig);
+		}
+		else if (tool == 6) // ellipse outline
+		{
+			float2 center = (uv_mouse_previous + uv_mouse) / 2.0;
+			float2 diff = abs(uv_mouse - center);
+			float2 inside = diff - tool_size;
+			float2 outside = diff + tool_size;
+			float2 temp = float2(pow((coord.x - center.x), 2), pow((coord.y - center.y), 2));	
+			if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
+				return apply_color(tool_color, orig);
+		}
+		else if (tool == 7) // ellipse
+		{
+			float2 center = (uv_mouse_previous + uv_mouse) / 2.0;
+			float2 diff = pow(uv_mouse - center, 2.0);
+			float p = (pow((coord.x - center.x), 2) / diff.x) + (pow((coord.y - center.y), 2) / diff.y);
+			if(p <= 1.0)
+				return apply_color(tool_color, orig);
+		}
+	}
+	return orig;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(vert_in);
+		pixel_shader = PSDraw(vert_in);
+	}
+}
