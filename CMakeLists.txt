@@ -17,6 +17,8 @@ add_library(${PROJECT_NAME} MODULE)
 
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/version.h.in ${CMAKE_CURRENT_SOURCE_DIR}/version.h)
 
+set(CMAKE_AUTORCC ON)
+
 target_sources(${PROJECT_NAME} PRIVATE
 	draw-dock.cpp
 	draw-dock.hpp
@@ -62,6 +64,8 @@ elseif(OS_MACOS)
 	set(MACOSX_PLUGIN_SHORT_VERSION_STRING "1")
 	configure_file(cmake/bundle/macos/installer-macos.pkgproj.in ${CMAKE_BINARY_DIR}/installer-macos.generated.pkgproj)
 	target_compile_options(${PROJECT_NAME} PRIVATE -Wall)
+elseif(OS_POSIX)
+	target_link_libraries(${PROJECT_NAME} Qt::GuiPrivate)
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON)
