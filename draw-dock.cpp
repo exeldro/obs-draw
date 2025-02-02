@@ -191,8 +191,8 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 	auto a = toolbar->addAction(QString::fromUtf8(obs_module_text("Config")), [this] {
 		if (!draw_source)
 			return;
-		auto menu = new QMenu;
-		auto cursorMenu = menu->addMenu(obs_module_text("Cursor"));
+		QMenu menu;
+		auto cursorMenu = menu.addMenu(obs_module_text("Cursor"));
 
 		auto a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("Show")));
 		a->setCheckable(true);
@@ -242,7 +242,7 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 		});
 
 		obs_data_release(settings);
-		menu->exec(QCursor::pos());
+		menu.exec(QCursor::pos());
 	});
 	toolbar->widgetForAction(a)->setProperty("themeID", "propertiesIconSmall");
 	toolbar->widgetForAction(a)->setProperty("class", "icon-gear");
