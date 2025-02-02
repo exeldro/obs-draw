@@ -278,6 +278,9 @@ static bool clear_property_button(obs_properties_t *props, obs_property_t *prope
 static obs_properties_t *ds_get_properties(void *data)
 {
 	obs_properties_t *props = obs_properties_create();
+
+	obs_properties_add_int(props, "width", obs_module_text("Width"), 10, 10000, 1);
+	obs_properties_add_int(props, "height", obs_module_text("Height"), 10, 10000, 1);
 	obs_property_t *p =
 		obs_properties_add_list(props, "tool", obs_module_text("Tool"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(p, obs_module_text("None"), TOOL_NONE);
@@ -290,6 +293,8 @@ static obs_properties_t *ds_get_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("EllipseFill"), TOOL_ELLIPSE_FILL);
 
 	obs_properties_add_color(props, "mouse_color", obs_module_text("CursorColor"));
+	p = obs_properties_add_float_slider(props, "cursor_size", obs_module_text("CursorSize"), 0.0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "px");
 	obs_properties_add_color(props, "tool_color", obs_module_text("ToolColor"));
 	p = obs_properties_add_float_slider(props, "tool_alpha", obs_module_text("ToolAlpha"), -100.0, 100.0, 0.1);
 	obs_property_float_set_suffix(p, "%");
