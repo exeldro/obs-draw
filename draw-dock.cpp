@@ -10,6 +10,7 @@
 #include <QVBoxLayout>
 #include <QMenu>
 #include <QWidgetAction>
+#include <util/platform.h>
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_AUTHOR("Exeldro");
@@ -108,9 +109,11 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 		if (!draw_source)
 			return;
 		int tool = toolCombo->currentData().toInt();
-		obs_data_t *settings = obs_data_create();
-		obs_data_set_int(settings, "tool", tool);
-		obs_source_update(draw_source, settings);
+		obs_data_t *settings = obs_source_get_settings(draw_source);
+		if (obs_data_get_int(settings, "tool") != tool) {
+			obs_data_set_int(settings, "tool", tool);
+			obs_source_update(draw_source, settings);
+		}
 		obs_data_release(settings);
 	});
 	toolbar->addWidget(toolCombo);
@@ -126,9 +129,12 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			return;
 		if (!draw_source)
 			return;
-		settings = obs_data_create();
-		obs_data_set_int(settings, "tool_color", color_to_int(color));
-		obs_source_update(draw_source, settings);
+		long long longColor = color_to_int(color);
+		settings = obs_source_get_settings(draw_source);
+		if (obs_data_get_int(settings, "tool_color") != longColor) {
+			obs_data_set_int(settings, "tool_color", longColor);
+			obs_source_update(draw_source, settings);
+		}
 		obs_data_release(settings);
 	});
 	toolSizeSpin = new QDoubleSpinBox;
@@ -137,9 +143,11 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 	connect(toolSizeSpin, &QDoubleSpinBox::valueChanged, [this] {
 		if (!draw_source)
 			return;
-		obs_data_t *settings = obs_data_create();
-		obs_data_set_double(settings, "tool_size", toolSizeSpin->value());
-		obs_source_update(draw_source, settings);
+		obs_data_t *settings = obs_source_get_settings(draw_source);
+		if (abs(obs_data_get_double(settings, "tool_size") - toolSizeSpin->value()) > 0.1) {
+			obs_data_set_double(settings, "tool_size", toolSizeSpin->value());
+			obs_source_update(draw_source, settings);
+		}
 		obs_data_release(settings);
 	});
 
@@ -158,9 +166,11 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			return;
 
 		auto alpha = eraseCheckbox->isChecked() ? -100.0 : alphaSpin->value();
-		obs_data_t *settings = obs_data_create();
-		obs_data_set_double(settings, "tool_alpha", alpha);
-		obs_source_update(draw_source, settings);
+		obs_data_t *settings = obs_source_get_settings(draw_source);
+		if (abs(obs_data_get_double(settings, "tool_alpha") - alpha) > 0.1) {
+			obs_data_set_double(settings, "tool_alpha", alpha);
+			obs_source_update(draw_source, settings);
+		}
 		obs_data_release(settings);
 	};
 
@@ -645,35 +655,48 @@ void DrawDock::CreateDrawSource()
 		}
 		obs_source_release(source);
 	}
-	if (!draw_source)
+	if (draw_source) {
+		signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
+		signal_handler_disconnect(sh, "update", draw_source_update, this);
+	} else {
 		draw_source = obs_get_source_by_name("Global Draw Source");
+	}
 	if (draw_source && strcmp(obs_source_get_unversioned_id(draw_source), "draw_source") != 0) {
 		obs_source_release(draw_source);
 		draw_source = nullptr;
 		return;
 	}
-	signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
-	signal_handler_disconnect(sh, "update", draw_source_update, this);
-	signal_handler_connect(sh, "update", draw_source_update, this);
 
-	obs_data_t *settings = obs_data_create();
+	const auto path = obs_module_config_path("config.json");
+	obs_data_t *config = obs_data_create_from_json_file_safe(path, "bak");
+	bfree(path);
+
 	obs_source_t *scene = obs_frontend_get_current_scene();
+	obs_data_t *settings = config ? obs_data_get_obj(config, "global_draw_source") : nullptr;
+	obs_data_release(config);
+	if (!settings) {
+		settings = obs_data_create();
+		obs_data_set_int(settings, "tool", 1);
+		obs_data_set_double(settings, "tool_alpha", 50.0);
+		if (!scene) {
+			obs_data_set_int(settings, "width", 1920);
+			obs_data_set_int(settings, "height", 1080);
+		}
+	}
 	if (scene) {
 		obs_data_set_int(settings, "width", obs_source_get_base_width(scene));
 		obs_data_set_int(settings, "height", obs_source_get_base_height(scene));
 		obs_source_release(scene);
-	} else {
-		obs_data_set_int(settings, "width", 1920);
-		obs_data_set_int(settings, "height", 1080);
 	}
-	obs_data_set_int(settings, "tool", 1);
-	obs_data_set_double(settings, "tool_alpha", 50.0);
 	if (!draw_source) {
 		draw_source = obs_source_create("draw_source", "Global Draw Source", settings, nullptr);
 	} else {
 		obs_source_update(draw_source, settings);
 	}
 	obs_data_release(settings);
+
+	signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
+	signal_handler_connect(sh, "update", draw_source_update, this);
 	if (set_output) {
 		for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
 			obs_source_t *source = obs_get_output_source(i);
@@ -687,6 +710,27 @@ void DrawDock::CreateDrawSource()
 	}
 }
 
+static void ensure_directory(char *path)
+{
+#ifdef _WIN32
+	char *backslash = strrchr(path, '\\');
+	if (backslash)
+		*backslash = '/';
+#endif
+
+	char *slash = strrchr(path, '/');
+	if (slash) {
+		*slash = 0;
+		os_mkdirs(path);
+		*slash = '/';
+	}
+
+#ifdef _WIN32
+	if (backslash)
+		*backslash = '\\';
+#endif
+}
+
 void DrawDock::DestroyDrawSource()
 {
 	if (!draw_source)
@@ -694,6 +738,25 @@ void DrawDock::DestroyDrawSource()
 
 	signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
 	signal_handler_disconnect(sh, "update", draw_source_update, this);
+
+	char *path = obs_module_config_path("config.json");
+	if (!path)
+		return;
+	ensure_directory(path);
+	obs_data_t *config = obs_data_create();
+	obs_data_t *gdss = obs_source_get_settings(draw_source);
+	if (gdss) {
+		obs_data_set_obj(config, "global_draw_source", gdss);
+		obs_data_release(gdss);
+	}
+	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
+		blog(LOG_INFO, "[Draw Dock] Saved settings");
+	} else {
+		blog(LOG_ERROR, "[Draw Dock] Failed saving settings");
+	}
+	obs_data_release(config);
+	bfree(path);
+
 	obs_source_release(draw_source);
 	draw_source = nullptr;
 }
@@ -731,12 +794,11 @@ void DrawDock::DrawSourceUpdate()
 		toolSizeSpin->setValue(size);
 
 	auto alpha = obs_data_get_double(settings, "tool_alpha");
-	if (alpha >= 0.0 && abs(alphaSpin->value() - alpha) > 0.1)
-		alphaSpin->setValue(alpha);
-
 	auto erase = alpha < 0.0;
 	if (eraseCheckbox->isChecked() != erase)
 		eraseCheckbox->setChecked(erase);
+	if (alpha >= 0.0 && abs(alphaSpin->value() - alpha) > 0.1)
+		alphaSpin->setValue(alpha);
 
 	obs_data_release(settings);
 }
