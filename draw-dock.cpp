@@ -636,7 +636,7 @@ void DrawDock::frontend_event(enum obs_frontend_event event, void *data)
 	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
 		window->CreateDrawSource();
 	} else if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP || event == OBS_FRONTEND_EVENT_EXIT ||
-		   event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN) {
+		   event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING) {
 		window->DestroyDrawSource();
 	}
 }
@@ -649,7 +649,10 @@ void DrawDock::CreateDrawSource()
 		if (!source)
 			continue;
 		if (strcmp(obs_source_get_unversioned_id(source), "draw_source") == 0) {
-			draw_source = source;
+			obs_source_release(draw_source);
+			if (draw_source != source) {
+				draw_source = source;
+			}
 			set_output = false;
 			break;
 		}
@@ -658,6 +661,7 @@ void DrawDock::CreateDrawSource()
 	if (draw_source) {
 		signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
 		signal_handler_disconnect(sh, "update", draw_source_update, this);
+		signal_handler_disconnect(sh, "destroy", draw_source_destroy, this);
 	} else {
 		draw_source = obs_get_source_by_name("Global Draw Source");
 	}
@@ -697,6 +701,7 @@ void DrawDock::CreateDrawSource()
 
 	signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
 	signal_handler_connect(sh, "update", draw_source_update, this);
+	signal_handler_connect(sh, "destroy", draw_source_destroy, this);
 	if (set_output) {
 		for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
 			obs_source_t *source = obs_get_output_source(i);
@@ -736,15 +741,24 @@ void DrawDock::DestroyDrawSource()
 	if (!draw_source)
 		return;
 
-	signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
+	auto source = obs_source_get_ref(draw_source);
+	if (!source) {
+		draw_source = nullptr;
+		return;
+	}
+	obs_source_release(draw_source);
+	draw_source = nullptr;
+
+	signal_handler_t *sh = obs_source_get_signal_handler(source);
 	signal_handler_disconnect(sh, "update", draw_source_update, this);
+	signal_handler_disconnect(sh, "destroy", draw_source_destroy, this);
 
 	char *path = obs_module_config_path("config.json");
 	if (!path)
 		return;
 	ensure_directory(path);
 	obs_data_t *config = obs_data_create();
-	obs_data_t *gdss = obs_source_get_settings(draw_source);
+	obs_data_t *gdss = obs_source_get_settings(source);
 	if (gdss) {
 		obs_data_set_obj(config, "global_draw_source", gdss);
 		obs_data_release(gdss);
@@ -757,8 +771,15 @@ void DrawDock::DestroyDrawSource()
 	obs_data_release(config);
 	bfree(path);
 
-	obs_source_release(draw_source);
-	draw_source = nullptr;
+	for (uint32_t i = 0; i < MAX_CHANNELS; i++) {
+		obs_source_t *s = obs_get_output_source(i);
+		if (s == source) {
+			obs_set_output_source(i, nullptr);
+		}
+		obs_source_release(s);
+	}
+
+	obs_source_release(source);
 }
 
 void DrawDock::draw_source_update(void *data, calldata_t *cd)
@@ -769,6 +790,16 @@ void DrawDock::draw_source_update(void *data, calldata_t *cd)
 		return;
 
 	QMetaObject::invokeMethod(window, "DrawSourceUpdate", Qt::QueuedConnection);
+}
+
+void DrawDock::draw_source_destroy(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(cd);
+	DrawDock *window = static_cast<DrawDock *>(data);
+	if (!window)
+		return;
+
+	window->draw_source = nullptr;
 }
 
 void DrawDock::DrawSourceUpdate()
