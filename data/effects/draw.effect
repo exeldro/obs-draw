@@ -116,7 +116,9 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 		}
 		else if (tool == 5) // rectangle
 		{
-			if (all(coord >= min(uv_mouse, uv_mouse_previous)) && all(coord <= max(uv_mouse, uv_mouse_previous)))
+			float2 min_mouse = min(uv_mouse, uv_mouse_previous);
+			float2 max_mouse = max(uv_mouse, uv_mouse_previous);
+			if (coord.x >= min_mouse.x && coord.x <= max_mouse.x && coord.y >= min_mouse.y && coord.y <= max_mouse.y)
 				return apply_color(tool_color, orig);
 		}
 		else if (tool == 6) // ellipse outline
@@ -125,15 +127,15 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 			float2 diff = abs(uv_mouse - center);
 			float2 inside = diff - tool_size;
 			float2 outside = diff + tool_size;
-			float2 temp = float2(pow((coord.x - center.x), 2), pow((coord.y - center.y), 2));	
+			float2 temp = float2(pow(coord.x - center.x, 2), pow(coord.y - center.y, 2));	
 			if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
 				return apply_color(tool_color, orig);
 		}
 		else if (tool == 7) // ellipse
 		{
 			float2 center = (uv_mouse_previous + uv_mouse) / 2.0;
-			float2 diff = pow(uv_mouse - center, 2.0);
-			float p = (pow((coord.x - center.x), 2) / diff.x) + (pow((coord.y - center.y), 2) / diff.y);
+			float2 diff = float2(pow(uv_mouse.x - center.x, 2.0), pow(uv_mouse.y - center.y, 2.0));
+			float p = (pow(coord.x - center.x, 2) / diff.x) + (pow(coord.y - center.y, 2) / diff.y);
 			if(p <= 1.0)
 				return apply_color(tool_color, orig);
 		}
