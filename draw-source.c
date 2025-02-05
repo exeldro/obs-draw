@@ -12,6 +12,7 @@ struct draw_source {
 	bool show_mouse;
 	bool mouse_active;
 	bool tool_down;
+	bool shift_down;
 
 	struct vec2 mouse_pos;
 	struct vec2 mouse_previous_pos;
@@ -28,6 +29,7 @@ struct draw_source {
 	gs_eparam_t *tool_color_param;
 	gs_eparam_t *tool_size_param;
 	gs_eparam_t *tool_down_param;
+	gs_eparam_t *shift_down_param;
 
 	uint32_t tool;
 	struct vec4 tool_color;
@@ -90,6 +92,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 		context->tool_color_param = gs_effect_get_param_by_name(context->draw_effect, "tool_color");
 		context->tool_size_param = gs_effect_get_param_by_name(context->draw_effect, "tool_size");
 		context->tool_down_param = gs_effect_get_param_by_name(context->draw_effect, "tool_down");
+		context->shift_down_param = gs_effect_get_param_by_name(context->draw_effect, "shift_down");
 	}
 	obs_leave_graphics();
 	bfree(effect_path);
@@ -137,6 +140,7 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
 	gs_effect_set_float(ds->tool_size_param, ds->tool_size);
 	gs_effect_set_bool(ds->tool_down_param, ds->tool_down);
+	gs_effect_set_bool(ds->shift_down_param, ds->shift_down);
 	gs_effect_set_texture(ds->image_param, tex);
 	while (gs_effect_loop(ds->draw_effect, "Draw"))
 		gs_draw_sprite(tex, 0, (uint32_t)ds->size.x, (uint32_t)ds->size.y);
@@ -202,6 +206,7 @@ static void ds_mouse_move(void *data, const struct obs_mouse_event *event, bool 
 	ds->mouse_pos.x = (float)event->x;
 	ds->mouse_pos.y = (float)event->y;
 	ds->mouse_active = !mouse_leave;
+	ds->shift_down = ((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
 
 	if (ds->mouse_active && ds->tool_down && draw_on_mouse_move(ds->tool)) {
 		apply_tool(ds);
@@ -218,6 +223,7 @@ void ds_mouse_click(void *data, const struct obs_mouse_event *event, int32_t typ
 
 	context->mouse_pos.x = (float)event->x;
 	context->mouse_pos.y = (float)event->y;
+	context->shift_down = ((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
 	bool draw = draw_on_mouse_move(context->tool);
 	if (draw) {
 		context->mouse_previous_pos.x = -1.0f;
@@ -236,6 +242,13 @@ void ds_mouse_click(void *data, const struct obs_mouse_event *event, int32_t typ
 	if (!draw) {
 		context->mouse_previous_pos = context->mouse_pos;
 	}
+}
+
+void ds_key_click(void *data, const struct obs_key_event *event, bool key_up)
+{
+	UNUSED_PARAMETER(key_up);
+	struct draw_source *context = data;
+	context->shift_down = ((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
 }
 
 static void ds_update(void *data, obs_data_t *settings)
@@ -331,6 +344,7 @@ struct obs_source_info draw_source_info = {
 	.video_render = ds_video_render,
 	.mouse_move = ds_mouse_move,
 	.mouse_click = ds_mouse_click,
+	.key_click = ds_key_click,
 	.update = ds_update,
 	.get_properties = ds_get_properties,
 	.get_defaults = ds_get_defaults,
