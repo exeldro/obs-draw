@@ -30,7 +30,10 @@ private:
 	obs_source_t *draw_source = nullptr;
 	gs_vertbuffer_t *box = nullptr;
 
+	obs_source_t *mouse_down_target = nullptr;
+
 	QToolBar *toolbar;
+	QComboBox *drawCombo;
 	QComboBox *toolCombo;
 	QAction *colorAction;
 	QDoubleSpinBox *toolSizeSpin;
@@ -64,6 +67,7 @@ private:
 
 private slots:
 	void DrawSourceUpdate();
+	void SceneChanged();
 
 public:
 	DrawDock(QWidget *parent = nullptr);

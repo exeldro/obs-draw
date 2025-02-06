@@ -334,7 +334,8 @@ static void ds_get_defaults(obs_data_t *settings)
 struct obs_source_info draw_source_info = {
 	.id = "draw_source",
 	.type = OBS_SOURCE_TYPE_INPUT,
-	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB | OBS_SOURCE_INTERACTION | OBS_SOURCE_CUSTOM_DRAW,
+	.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB | OBS_SOURCE_INTERACTION | OBS_SOURCE_CUSTOM_DRAW |
+			OBS_SOURCE_DO_NOT_DUPLICATE,
 	.get_name = ds_get_name,
 	.create = ds_create,
 	.destroy = ds_destroy,

@@ -115,6 +115,30 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			obs_source_update(draw_source, settings);
 		}
 		obs_data_release(settings);
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				int tool = *((int *)data);
+				obs_data_t *ss = obs_source_get_settings(source);
+				if (obs_data_get_int(ss, "tool") != tool) {
+					obs_data_set_int(ss, "tool", tool);
+					obs_source_update(source, ss);
+				}
+				obs_data_release(ss);
+				return true;
+			},
+			&tool);
 	});
 	toolbar->addWidget(toolCombo);
 	colorAction = toolbar->addAction("", [this] {
@@ -136,19 +160,70 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			obs_source_update(draw_source, settings);
 		}
 		obs_data_release(settings);
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				long long longColor = *((long long *)data);
+				obs_data_t *ss = obs_source_get_settings(source);
+				if (obs_data_get_int(ss, "tool_color") != longColor) {
+					obs_data_set_int(ss, "tool_color", longColor);
+					obs_source_update(source, ss);
+				}
+				obs_data_release(ss);
+				return true;
+			},
+			&longColor);
 	});
 	toolSizeSpin = new QDoubleSpinBox;
 	toolSizeSpin->setRange(0.0, 1000.0);
 	toolSizeSpin->setSuffix("px");
 	connect(toolSizeSpin, &QDoubleSpinBox::valueChanged, [this] {
-		if (!draw_source)
-			return;
-		obs_data_t *settings = obs_source_get_settings(draw_source);
-		if (abs(obs_data_get_double(settings, "tool_size") - toolSizeSpin->value()) > 0.1) {
-			obs_data_set_double(settings, "tool_size", toolSizeSpin->value());
-			obs_source_update(draw_source, settings);
+		double size = toolSizeSpin->value();
+		if (draw_source) {
+
+			obs_data_t *settings = obs_source_get_settings(draw_source);
+			if (abs(obs_data_get_double(settings, "tool_size") - size) > 0.1) {
+				obs_data_set_double(settings, "tool_size", size);
+				obs_source_update(draw_source, settings);
+			}
+			obs_data_release(settings);
 		}
-		obs_data_release(settings);
+
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				double size = *((double *)data);
+				obs_data_t *ss = obs_source_get_settings(source);
+				if (abs(obs_data_get_double(ss, "tool_size") - size) > 0.1) {
+					obs_data_set_double(ss, "tool_size", size);
+					obs_source_update(source, ss);
+				}
+				obs_data_release(ss);
+				return true;
+			},
+			&size);
 	});
 
 	toolbar->addWidget(toolSizeSpin);
@@ -165,13 +240,38 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 		if (!draw_source)
 			return;
 
-		auto alpha = eraseCheckbox->isChecked() ? -100.0 : alphaSpin->value();
+		double alpha = eraseCheckbox->isChecked() ? -100.0 : alphaSpin->value();
 		obs_data_t *settings = obs_source_get_settings(draw_source);
 		if (abs(obs_data_get_double(settings, "tool_alpha") - alpha) > 0.1) {
 			obs_data_set_double(settings, "tool_alpha", alpha);
 			obs_source_update(draw_source, settings);
 		}
 		obs_data_release(settings);
+
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				double alpha = *((double *)data);
+				obs_data_t *ss = obs_source_get_settings(source);
+				if (abs(obs_data_get_double(ss, "tool_alpha") - alpha) > 0.1) {
+					obs_data_set_double(ss, "tool_alpha", alpha);
+					obs_source_update(source, ss);
+				}
+				obs_data_release(ss);
+				return true;
+			},
+			&alpha);
 	};
 
 	connect(alphaSpin, &QDoubleSpinBox::valueChanged, alphaChange);
@@ -186,6 +286,28 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			return;
 		calldata_t d = {};
 		proc_handler_call(ph, "clear", &d);
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				proc_handler_t *ph = obs_source_get_proc_handler(source);
+				if (!ph)
+					return true;
+				calldata_t cd = {};
+				proc_handler_call(ph, "clear", &cd);
+				return true;
+			},
+			nullptr);
 	});
 
 	auto a = toolbar->addAction(QString::fromUtf8(obs_module_text("Config")), [this] {
@@ -436,6 +558,60 @@ static int TranslateQtMouseEventModifiers(QMouseEvent *event)
 	return modifiers;
 }
 
+static bool CloseFloat(float a, float b, float epsilon = 0.01)
+{
+	using std::abs;
+	return abs(a - b) <= epsilon;
+}
+
+struct click_event {
+	int32_t x;
+	int32_t y;
+	uint32_t modifiers;
+	int32_t button;
+	bool mouseUp;
+	uint32_t clickCount;
+	obs_source_t *mouseTarget;
+	obs_mouse_event mouseEvent;
+};
+
+static bool HandleSceneMouseClickEvent(obs_scene_t *scene, obs_sceneitem_t *item, void *data)
+{
+	UNUSED_PARAMETER(scene);
+	if (!obs_sceneitem_visible(item))
+		return true;
+	auto source = obs_sceneitem_get_source(item);
+	if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+		return true;
+
+	auto click_event = static_cast<struct click_event *>(data);
+
+	matrix4 transform;
+	matrix4 invTransform;
+	vec3 transformedPos;
+	vec3 pos3;
+	vec3 pos3_;
+
+	vec3_set(&pos3, click_event->x, click_event->y, 0.0f);
+
+	obs_sceneitem_get_box_transform(item, &transform);
+
+	matrix4_inv(&invTransform, &transform);
+	vec3_transform(&transformedPos, &pos3, &invTransform);
+	vec3_transform(&pos3_, &transformedPos, &transform);
+
+	if (CloseFloat(pos3.x, pos3_.x) && CloseFloat(pos3.y, pos3_.y) && transformedPos.x >= 0.0f && transformedPos.x <= 1.0f &&
+	    transformedPos.y >= 0.0f && transformedPos.y <= 1.0f) {
+		click_event->mouseEvent.x = transformedPos.x * obs_source_get_base_width(source);
+		click_event->mouseEvent.y = transformedPos.y * obs_source_get_base_height(source);
+		click_event->mouseEvent.modifiers = click_event->modifiers;
+		click_event->mouseTarget = source;
+		return false;
+	}
+
+	return true;
+}
+
 bool DrawDock::HandleMouseClickEvent(QMouseEvent *event)
 {
 	const bool mouseUp = event->type() == QEvent::MouseButtonRelease;
@@ -471,22 +647,100 @@ bool DrawDock::HandleMouseClickEvent(QMouseEvent *event)
 		return false;
 	}
 
-	// Why doesn't this work?
-	//if (event->flags().testFlag(Qt::MouseEventCreatedDoubleClick))
-	//	clickCount = 2;
-
 	const bool insideSource = GetSourceRelativeXY(event->pos().x(), event->pos().y(), mouseEvent.x, mouseEvent.y);
+	if (!mouseUp && !insideSource)
+		return false;
 
-	if (draw_source && (mouseUp || insideSource))
+	click_event ce{mouseEvent.x, mouseEvent.y, mouseEvent.modifiers, button, mouseUp, clickCount, nullptr};
+
+	obs_source_t *scene_source = obs_frontend_get_current_scene();
+	if (scene_source) {
+		if (obs_scene_t *scene = obs_scene_from_source(scene_source)) {
+			obs_scene_enum_items(scene, HandleSceneMouseClickEvent, &ce);
+		}
+		obs_source_release(scene_source);
+	}
+	if (ce.mouseTarget) {
+		obs_source_send_mouse_click(ce.mouseTarget, &ce.mouseEvent, button, mouseUp, clickCount);
+		if (mouseUp) {
+			if (mouse_down_target) {
+				if (mouse_down_target == draw_source) {
+					obs_source_send_mouse_click(draw_source, &mouseEvent, button, mouseUp, clickCount);
+				} else if (mouse_down_target != ce.mouseTarget) {
+					obs_source_send_mouse_click(mouse_down_target, &mouseEvent, button, mouseUp, clickCount);
+				}
+			}
+		} else {
+			mouse_down_target = ce.mouseTarget;
+		}
+	} else if (draw_source) {
 		obs_source_send_mouse_click(draw_source, &mouseEvent, button, mouseUp, clickCount);
+		if (mouseUp) {
+			if (mouse_down_target && mouse_down_target != draw_source) {
+				obs_source_send_mouse_click(mouse_down_target, &mouseEvent, button, mouseUp, clickCount);
+			}
+		} else {
+			mouse_down_target = draw_source;
+		}
+	} else if (mouseUp && mouse_down_target) {
+		obs_source_send_mouse_click(mouse_down_target, &mouseEvent, button, mouseUp, clickCount);
+	} else {
+		mouse_down_target = nullptr;
+	}
 
 	return true;
 }
 
-static bool CloseFloat(float a, float b, float epsilon = 0.01)
+struct move_event {
+	int32_t x;
+	int32_t y;
+	uint32_t modifiers;
+	bool mouseLeave;
+	obs_source_t *mouseTarget;
+	obs_mouse_event mouseEvent;
+};
+
+static bool HandleSceneMouseMoveEvent(obs_scene_t *scene, obs_sceneitem_t *item, void *data)
 {
-	using std::abs;
-	return abs(a - b) <= epsilon;
+	UNUSED_PARAMETER(scene);
+	if (!obs_sceneitem_visible(item))
+		return true;
+	obs_source_t *source = obs_sceneitem_get_source(item);
+	if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+		return true;
+
+	auto move_event = static_cast<struct move_event *>(data);
+
+	matrix4 transform{};
+	matrix4 invTransform{};
+	vec3 transformedPos{};
+	vec3 pos3{};
+	vec3 pos3_{};
+
+	vec3_set(&pos3, move_event->x, move_event->y, 0.0f);
+
+	obs_sceneitem_get_box_transform(item, &transform);
+
+	matrix4_inv(&invTransform, &transform);
+	vec3_transform(&transformedPos, &pos3, &invTransform);
+	vec3_transform(&pos3_, &transformedPos, &transform);
+
+	if (CloseFloat(pos3.x, pos3_.x) && CloseFloat(pos3.y, pos3_.y) && transformedPos.x >= 0.0f && transformedPos.x <= 1.0f &&
+	    transformedPos.y >= 0.0f && transformedPos.y <= 1.0f) {
+		move_event->mouseEvent.x = transformedPos.x * obs_source_get_base_width(source);
+		move_event->mouseEvent.y = transformedPos.y * obs_source_get_base_height(source);
+		move_event->mouseEvent.modifiers = move_event->modifiers;
+		move_event->mouseTarget = source;
+		return false;
+	}
+
+	obs_mouse_event mouseEvent;
+	mouseEvent.x = transformedPos.x * obs_source_get_base_width(source);
+	mouseEvent.y = transformedPos.y * obs_source_get_base_height(source);
+	mouseEvent.modifiers = move_event->modifiers;
+	obs_source_send_mouse_move(source, &mouseEvent, true);
+
+	return true;
 }
 
 bool DrawDock::HandleMouseMoveEvent(QMouseEvent *event)
@@ -518,8 +772,22 @@ bool DrawDock::HandleMouseMoveEvent(QMouseEvent *event)
 		mouseEvent.modifiers = TranslateQtMouseEventModifiers(event);
 		mouseLeave = !GetSourceRelativeXY(event->pos().x(), event->pos().y(), mouseEvent.x, mouseEvent.y);
 	}
+
+	move_event ce{mouseEvent.x, mouseEvent.y, mouseEvent.modifiers, mouseLeave, nullptr};
+
+	obs_source_t *scene_source = obs_frontend_get_current_scene();
+	if (scene_source) {
+		if (obs_scene_t *scene = obs_scene_from_source(scene_source)) {
+			obs_scene_enum_items(scene, HandleSceneMouseMoveEvent, &ce);
+		}
+		obs_source_release(scene_source);
+	}
+	if (ce.mouseTarget)
+		obs_source_send_mouse_move(ce.mouseTarget, &ce.mouseEvent, false);
+
 	if (draw_source)
-		obs_source_send_mouse_move(draw_source, &mouseEvent, mouseLeave);
+		obs_source_send_mouse_move(draw_source, &mouseEvent,
+					   mouseLeave || (ce.mouseTarget && mouse_down_target != draw_source));
 
 	return true;
 }
@@ -595,6 +863,14 @@ bool DrawDock::HandleKeyEvent(QKeyEvent *event)
 
 	bool keyUp = event->type() == QEvent::KeyRelease;
 
+	if (event->key() == Qt::Key_Shift) {
+		if (!keyUp) {
+			keyEvent.modifiers |= INTERACT_SHIFT_KEY;
+		} else if ((keyEvent.modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY) {
+			keyEvent.modifiers -= INTERACT_SHIFT_KEY;
+		}
+	}
+
 	if (draw_source)
 		obs_source_send_key_click(draw_source, &keyEvent, keyUp);
 
@@ -638,6 +914,9 @@ void DrawDock::frontend_event(enum obs_frontend_event event, void *data)
 	} else if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP || event == OBS_FRONTEND_EVENT_EXIT ||
 		   event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING) {
 		window->DestroyDrawSource();
+	} else if (event == OBS_FRONTEND_EVENT_SCENE_CHANGED || event == OBS_FRONTEND_EVENT_STUDIO_MODE_ENABLED ||
+		   event == OBS_FRONTEND_EVENT_STUDIO_MODE_DISABLED || event == OBS_FRONTEND_EVENT_PREVIEW_SCENE_CHANGED) {
+		QMetaObject::invokeMethod(window, "SceneChanged", Qt::QueuedConnection);
 	}
 }
 
@@ -865,4 +1144,29 @@ void DrawDock::DrawBackdrop(float cx, float cy)
 	gs_load_vertexbuffer(nullptr);
 
 	GS_DEBUG_MARKER_END();
+}
+
+void DrawDock::SceneChanged()
+{
+	obs_source_t *scene_source = obs_frontend_get_current_scene();
+	if (!scene_source)
+		return;
+	obs_scene_t *scene = obs_scene_from_source(scene_source);
+	obs_source_release(scene_source);
+	if (!scene)
+		return;
+
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+			auto source = obs_sceneitem_get_source(item);
+			if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+				return true;
+			DrawDock *window = static_cast<DrawDock *>(data);
+			if (!window)
+				return true;
+
+			return true;
+		},
+		this);
 }
