@@ -1,11 +1,12 @@
 uniform float4x4 ViewProj;
 uniform texture2d image;
 uniform float2 uv_size;
-uniform bool draw_mouse;
+uniform int draw_cursor;
 uniform float2 uv_mouse;
 uniform float2 uv_mouse_previous;
-uniform float4 mouse_color;
-uniform float mouse_size;
+uniform float4 cursor_color;
+uniform float cursor_size;
+uniform texture2d cursor_image;
 uniform int tool;
 uniform float4 tool_color;
 uniform float tool_size;
@@ -87,11 +88,21 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 {
 	float4 orig = image.Sample(def_sampler, vert_in.uv);
 	float2 coord = vert_in.uv * uv_size;
-	if (draw_mouse)
+	if (draw_cursor == 1)
 	{
 		float d = distance(coord, uv_mouse);
-		if (d < mouse_size)
-			return mouse_color;
+		if (d < cursor_size)
+			return cursor_color;
+	}
+	else if (draw_cursor == 2)
+	{
+		if (abs(coord.x - uv_mouse.x) < cursor_size && abs(coord.y - uv_mouse.y) < cursor_size)
+		{
+			float2 cursor_pos = (coord - uv_mouse) / float2(cursor_size * 2.0, cursor_size * 2.0) + float2(0.5, 0.5);
+			float4 cc = cursor_image.Sample(def_sampler, cursor_pos);
+			if(cc.a > 0.0)
+				return cc;
+		}
 	}
 	if (tool_down)
 	{

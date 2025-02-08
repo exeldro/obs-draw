@@ -1,5 +1,6 @@
 #include <obs-module.h>
 #include "draw-source.h"
+#include <graphics/image-file.h>
 
 struct draw_source {
 	obs_source_t *source;
@@ -22,9 +23,10 @@ struct draw_source {
 	gs_eparam_t *uv_size_param;
 	gs_eparam_t *uv_mouse_param;
 	gs_eparam_t *uv_mouse_previous_param;
-	gs_eparam_t *draw_mouse_param;
-	gs_eparam_t *mouse_color_param;
-	gs_eparam_t *mouse_size_param;
+	gs_eparam_t *draw_cursor_param;
+	gs_eparam_t *cursor_color_param;
+	gs_eparam_t *cursor_size_param;
+	gs_eparam_t *cursor_image_param;
 	gs_eparam_t *tool_param;
 	gs_eparam_t *tool_color_param;
 	gs_eparam_t *tool_size_param;
@@ -35,8 +37,11 @@ struct draw_source {
 	struct vec4 tool_color;
 	float tool_size;
 
-	struct vec4 mouse_color;
-	float mouse_size;
+	struct vec4 cursor_color;
+	float cursor_size;
+	char *cursor_image_path;
+	gs_image_file4_t *cursor_image;
+	uint64_t last_tick;
 };
 
 const char *ds_get_name(void *data)
@@ -72,8 +77,8 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 
 	context->size.x = (float)obs_data_get_int(settings, "width");
 	context->size.y = (float)obs_data_get_int(settings, "height");
-	vec4_from_rgba_srgb(&context->mouse_color, 0xFFFFFF00);
-	context->mouse_size = 10;
+	vec4_from_rgba_srgb(&context->cursor_color, 0xFFFFFF00);
+	context->cursor_size = 10;
 
 	context->show_mouse = true;
 
@@ -85,9 +90,10 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 		context->uv_size_param = gs_effect_get_param_by_name(context->draw_effect, "uv_size");
 		context->uv_mouse_param = gs_effect_get_param_by_name(context->draw_effect, "uv_mouse");
 		context->uv_mouse_previous_param = gs_effect_get_param_by_name(context->draw_effect, "uv_mouse_previous");
-		context->draw_mouse_param = gs_effect_get_param_by_name(context->draw_effect, "draw_mouse");
-		context->mouse_color_param = gs_effect_get_param_by_name(context->draw_effect, "mouse_color");
-		context->mouse_size_param = gs_effect_get_param_by_name(context->draw_effect, "mouse_size");
+		context->draw_cursor_param = gs_effect_get_param_by_name(context->draw_effect, "draw_cursor");
+		context->cursor_color_param = gs_effect_get_param_by_name(context->draw_effect, "cursor_color");
+		context->cursor_size_param = gs_effect_get_param_by_name(context->draw_effect, "cursor_size");
+		context->cursor_image_param = gs_effect_get_param_by_name(context->draw_effect, "cursor_image");
 		context->tool_param = gs_effect_get_param_by_name(context->draw_effect, "tool");
 		context->tool_color_param = gs_effect_get_param_by_name(context->draw_effect, "tool_color");
 		context->tool_size_param = gs_effect_get_param_by_name(context->draw_effect, "tool_size");
@@ -107,12 +113,33 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 static void ds_destroy(void *data)
 {
 	struct draw_source *context = data;
-	if (context->render_a || context->render_b) {
-		obs_enter_graphics();
+	bool graphics = false;
+	if (context->render_a) {
+		if (!graphics) {
+			graphics = true;
+			obs_enter_graphics();
+		}
 		gs_texrender_destroy(context->render_a);
-		gs_texrender_destroy(context->render_b);
-		obs_leave_graphics();
 	}
+	if (context->render_b) {
+		if (!graphics) {
+			graphics = true;
+			obs_enter_graphics();
+		}
+		gs_texrender_destroy(context->render_b);
+	}
+	if (context->cursor_image) {
+		if (!graphics) {
+			graphics = true;
+			obs_enter_graphics();
+		}
+		gs_image_file4_free(context->cursor_image);
+		bfree(context->cursor_image);
+	}
+	if (graphics)
+		obs_leave_graphics();
+	if (context->cursor_image_path)
+		bfree(context->cursor_image_path);
 	bfree(context);
 }
 
@@ -133,9 +160,10 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 	gs_effect_set_vec2(ds->uv_size_param, &ds->size);
 	gs_effect_set_vec2(ds->uv_mouse_param, &ds->mouse_pos);
 	gs_effect_set_vec2(ds->uv_mouse_previous_param, &ds->mouse_previous_pos);
-	gs_effect_set_bool(ds->draw_mouse_param, mouse);
-	gs_effect_set_vec4(ds->mouse_color_param, &ds->mouse_color);
-	gs_effect_set_float(ds->mouse_size_param, ds->mouse_size);
+	gs_effect_set_int(ds->draw_cursor_param, mouse ? (ds->cursor_image ? 2 : 1) : 0);
+	gs_effect_set_vec4(ds->cursor_color_param, &ds->cursor_color);
+	gs_effect_set_float(ds->cursor_size_param, ds->cursor_size);
+	gs_effect_set_texture(ds->cursor_image_param, ds->cursor_image ? ds->cursor_image->image3.image2.image.texture : NULL);
 	gs_effect_set_int(ds->tool_param, ds->tool);
 	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
 	gs_effect_set_float(ds->tool_size_param, ds->tool_size);
@@ -258,9 +286,9 @@ static void ds_update(void *data, obs_data_t *settings)
 	context->size.y = (float)obs_data_get_int(settings, "height");
 	context->tool = (uint32_t)obs_data_get_int(settings, "tool");
 	context->show_mouse = obs_data_get_bool(settings, "show_cursor");
-	context->mouse_size = (float)obs_data_get_double(settings, "cursor_size");
-	vec4_from_rgba(&context->mouse_color, (uint32_t)obs_data_get_int(settings, "mouse_color"));
-	context->mouse_color.w = 1.0f;
+	context->cursor_size = (float)obs_data_get_double(settings, "cursor_size");
+	vec4_from_rgba(&context->cursor_color, (uint32_t)obs_data_get_int(settings, "cursor_color"));
+	context->cursor_color.w = 1.0f;
 	vec4_from_rgba(&context->tool_color, (uint32_t)obs_data_get_int(settings, "tool_color"));
 	context->tool_color.w = (float)obs_data_get_double(settings, "tool_alpha") / 100.0f;
 	context->tool_size = (float)obs_data_get_double(settings, "tool_size");
@@ -277,6 +305,38 @@ static void ds_update(void *data, obs_data_t *settings)
 	} else {
 		//gs_texrender_reset(context->render);
 	}
+
+	const char *cursor_image_path = obs_data_get_string(settings, "cursor_file");
+	if (strlen(cursor_image_path) > 0) {
+		if (!context->cursor_image_path || strcmp(cursor_image_path, context->cursor_image_path) != 0) {
+			if (context->cursor_image_path)
+				bfree(context->cursor_image_path);
+			context->cursor_image_path = bstrdup(cursor_image_path);
+			if (!context->cursor_image) {
+				context->cursor_image = bzalloc(sizeof(gs_image_file4_t));
+			} else {
+				obs_enter_graphics();
+				gs_image_file4_free(context->cursor_image);
+				obs_leave_graphics();
+			}
+			gs_image_file4_init(context->cursor_image, cursor_image_path, GS_IMAGE_ALPHA_PREMULTIPLY_SRGB);
+			// : GS_IMAGE_ALPHA_PREMULTIPLY);
+
+			obs_enter_graphics();
+			gs_image_file4_init_texture(context->cursor_image);
+			obs_leave_graphics();
+		}
+	} else if (context->cursor_image) {
+		obs_enter_graphics();
+		gs_image_file4_free(context->cursor_image);
+		obs_leave_graphics();
+		bfree(context->cursor_image);
+		context->cursor_image = NULL;
+		if (context->cursor_image_path) {
+			bfree(context->cursor_image_path);
+			context->cursor_image_path = NULL;
+		}
+	}
 }
 
 static bool clear_property_button(obs_properties_t *props, obs_property_t *property, void *data)
@@ -287,6 +347,24 @@ static bool clear_property_button(obs_properties_t *props, obs_property_t *prope
 	clear(ds);
 	return false;
 }
+
+const char *image_filter =
+#ifdef _WIN32
+	"All formats (*.bmp *.tga *.png *.jpeg *.jpg *.jxr *.gif *.psd *.webp);;"
+#else
+	"All formats (*.bmp *.tga *.png *.jpeg *.jpg *.gif *.psd *.webp);;"
+#endif
+	"BMP Files (*.bmp);;"
+	"Targa Files (*.tga);;"
+	"PNG Files (*.png);;"
+	"JPEG Files (*.jpeg *.jpg);;"
+#ifdef _WIN32
+	"JXR Files (*.jxr);;"
+#endif
+	"GIF Files (*.gif);;"
+	"PSD Files (*.psd);;"
+	"WebP Files (*.webp);;"
+	"All Files (*.*)";
 
 static obs_properties_t *ds_get_properties(void *data)
 {
@@ -305,14 +383,16 @@ static obs_properties_t *ds_get_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("EllipseOutline"), TOOL_ELLIPSE_OUTLINE);
 	obs_property_list_add_int(p, obs_module_text("EllipseFill"), TOOL_ELLIPSE_FILL);
 
-	obs_properties_add_color(props, "mouse_color", obs_module_text("CursorColor"));
-	p = obs_properties_add_float_slider(props, "cursor_size", obs_module_text("CursorSize"), 0.0, 100.0, 0.1);
-	obs_property_float_set_suffix(p, "px");
 	obs_properties_add_color(props, "tool_color", obs_module_text("ToolColor"));
 	p = obs_properties_add_float_slider(props, "tool_alpha", obs_module_text("ToolAlpha"), -100.0, 100.0, 0.1);
 	obs_property_float_set_suffix(p, "%");
 	p = obs_properties_add_float_slider(props, "tool_size", obs_module_text("ToolSize"), 0.0, 100.0, 0.1);
 	obs_property_float_set_suffix(p, "px");
+
+	obs_properties_add_color(props, "cursor_color", obs_module_text("CursorColor"));
+	p = obs_properties_add_float_slider(props, "cursor_size", obs_module_text("CursorSize"), 0.0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "px");
+	obs_properties_add_path(props, "cursor_file", obs_module_text("CursorFile"), OBS_PATH_FILE, image_filter, NULL);
 
 	obs_properties_add_button2(props, "clear", obs_module_text("Clear"), clear_property_button, data);
 
@@ -324,11 +404,29 @@ static void ds_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "width", 200);
 	obs_data_set_default_int(settings, "height", 200);
 	obs_data_set_default_double(settings, "tool_size", 10.0);
-	obs_data_set_default_int(settings, "mouse_color", 0xFFFFFF00);
+	obs_data_set_default_int(settings, "cursor_color", 0xFFFFFF00);
 	obs_data_set_default_int(settings, "tool_color", 0xFF0000FF);
 	obs_data_set_default_double(settings, "tool_alpha", 100.0);
 	obs_data_set_default_bool(settings, "show_cursor", true);
 	obs_data_set_default_double(settings, "cursor_size", 10);
+}
+
+static void ds_video_tick(void *data, float seconds)
+{
+	UNUSED_PARAMETER(seconds);
+	struct draw_source *ds = data;
+
+	uint64_t frame_time = obs_get_video_frame_time();
+
+	if (ds->last_tick && ds->cursor_image && ds->cursor_image->image3.image2.image.is_animated_gif) {
+		uint64_t elapsed = frame_time - ds->last_tick;
+		if (gs_image_file4_tick(ds->cursor_image, elapsed)) {
+			obs_enter_graphics();
+			gs_image_file4_update_texture(ds->cursor_image);
+			obs_leave_graphics();
+		}
+	}
+	ds->last_tick = frame_time;
 }
 
 struct obs_source_info draw_source_info = {
@@ -349,4 +447,5 @@ struct obs_source_info draw_source_info = {
 	.update = ds_update,
 	.get_properties = ds_get_properties,
 	.get_defaults = ds_get_defaults,
+	.video_tick = ds_video_tick,
 };

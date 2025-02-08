@@ -1,14 +1,15 @@
 #include "draw-dock.hpp"
-#include "version.h"
 #include "draw-source.h"
+#include "version.h"
 #include <graphics/matrix4.h>
 #include <obs-module.h>
 #include <QColorDialog>
+#include <QFileDialog>
 #include <QGuiApplication>
 #include <QMainWindow>
+#include <QMenu>
 #include <QPushButton>
 #include <QVBoxLayout>
-#include <QMenu>
 #include <QWidgetAction>
 #include <util/platform.h>
 
@@ -333,7 +334,7 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			if (!draw_source)
 				return;
 			obs_data_t *settings = obs_source_get_settings(draw_source);
-			QColor color = color_from_int(obs_data_get_int(settings, "mouse_color"));
+			QColor color = color_from_int(obs_data_get_int(settings, "cursor_color"));
 			obs_data_release(settings);
 			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 			color = QColorDialog::getColor(color, main_window, QString::fromUtf8(obs_module_text("CursorColor")));
@@ -342,7 +343,27 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			if (!draw_source)
 				return;
 			settings = obs_data_create();
-			obs_data_set_int(settings, "mouse_color", color_to_int(color));
+			obs_data_set_int(settings, "cursor_color", color_to_int(color));
+			obs_data_set_string(settings, "cursor_file", "");
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+		cursorMenu->addAction(QString::fromUtf8(obs_module_text("CursorImage")), [this] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_source_get_settings(draw_source);
+			const char *path = obs_data_get_string(settings, "cursor_file");
+			obs_data_release(settings);
+			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+			QString fileName = QFileDialog::getOpenFileName(main_window,
+									QString::fromUtf8(obs_module_text("CursorImage")),
+									QString::fromUtf8(path), image_filter);
+			if (fileName.isEmpty())
+				return;
+			if (!draw_source)
+				return;
+			settings = obs_data_create();
+			obs_data_set_string(settings, "cursor_file", fileName.toUtf8().constData());
 			obs_source_update(draw_source, settings);
 			obs_data_release(settings);
 		});
@@ -669,6 +690,7 @@ bool DrawDock::HandleMouseClickEvent(QMouseEvent *event)
 				} else if (mouse_down_target != ce.mouseTarget) {
 					obs_source_send_mouse_click(mouse_down_target, &mouseEvent, button, mouseUp, clickCount);
 				}
+				mouse_down_target = nullptr;
 			}
 		} else {
 			mouse_down_target = ce.mouseTarget;
@@ -679,11 +701,13 @@ bool DrawDock::HandleMouseClickEvent(QMouseEvent *event)
 			if (mouse_down_target && mouse_down_target != draw_source) {
 				obs_source_send_mouse_click(mouse_down_target, &mouseEvent, button, mouseUp, clickCount);
 			}
+			mouse_down_target = nullptr;
 		} else {
 			mouse_down_target = draw_source;
 		}
 	} else if (mouseUp && mouse_down_target) {
 		obs_source_send_mouse_click(mouse_down_target, &mouseEvent, button, mouseUp, clickCount);
+		mouse_down_target = nullptr;
 	} else {
 		mouse_down_target = nullptr;
 	}
@@ -775,15 +799,17 @@ bool DrawDock::HandleMouseMoveEvent(QMouseEvent *event)
 
 	move_event ce{mouseEvent.x, mouseEvent.y, mouseEvent.modifiers, mouseLeave, nullptr};
 
-	obs_source_t *scene_source = obs_frontend_get_current_scene();
-	if (scene_source) {
-		if (obs_scene_t *scene = obs_scene_from_source(scene_source)) {
-			obs_scene_enum_items(scene, HandleSceneMouseMoveEvent, &ce);
+	if (!mouseLeave) {
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (scene_source) {
+			if (obs_scene_t *scene = obs_scene_from_source(scene_source)) {
+				obs_scene_enum_items(scene, HandleSceneMouseMoveEvent, &ce);
+			}
+			obs_source_release(scene_source);
 		}
-		obs_source_release(scene_source);
+		if (ce.mouseTarget)
+			obs_source_send_mouse_move(ce.mouseTarget, &ce.mouseEvent, false);
 	}
-	if (ce.mouseTarget)
-		obs_source_send_mouse_move(ce.mouseTarget, &ce.mouseEvent, false);
 
 	if (draw_source)
 		obs_source_send_mouse_move(draw_source, &mouseEvent,
