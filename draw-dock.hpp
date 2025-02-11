@@ -25,7 +25,7 @@ public:
 class DrawDock : public QWidget {
 	Q_OBJECT
 private:
-	OBSEventFilter* eventFilter;
+	OBSEventFilter *eventFilter;
 	OBSQTDisplay *preview;
 	obs_source_t *draw_source = nullptr;
 	gs_vertbuffer_t *box = nullptr;
@@ -57,7 +57,7 @@ private:
 
 	void DrawBackdrop(float cx, float cy);
 
-	void CreateDrawSource(obs_source_t* source = nullptr);
+	void CreateDrawSource(obs_source_t *source = nullptr);
 	void DestroyDrawSource();
 
 	static void DrawPreview(void *data, uint32_t cx, uint32_t cy);

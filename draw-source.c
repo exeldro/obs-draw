@@ -53,12 +53,13 @@ const char *ds_get_name(void *data)
 void clear(struct draw_source *ds)
 {
 	obs_enter_graphics();
-	gs_texrender_reset(ds->render_a_active ? ds->render_a : ds->render_b);
-	if (gs_texrender_begin(ds->render_a_active ? ds->render_a : ds->render_b, (uint32_t)ds->size.x, (uint32_t)ds->size.y)) {
+	gs_texrender_reset(ds->render_a_active ? ds->render_b : ds->render_a);
+	if (gs_texrender_begin(ds->render_a_active ? ds->render_b : ds->render_a, (uint32_t)ds->size.x, (uint32_t)ds->size.y)) {
 		struct vec4 clear_color;
 		vec4_zero(&clear_color);
 		gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
-		gs_texrender_end(ds->render_a_active ? ds->render_a : ds->render_b);
+		gs_texrender_end(ds->render_a_active ? ds->render_b : ds->render_a);
+		ds->render_a_active = !ds->render_a_active;
 	}
 	obs_leave_graphics();
 }
@@ -68,6 +69,13 @@ void clear_proc_handler(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(cd);
 	struct draw_source *context = data;
 	clear(context);
+}
+
+void undo_proc_handler(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(cd);
+	struct draw_source *context = data;
+	context->render_a_active = !context->render_a_active;
 }
 
 static void *ds_create(obs_data_t *settings, obs_source_t *source)
@@ -105,6 +113,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	proc_handler_add(ph, "void clear()", clear_proc_handler, context);
+	proc_handler_add(ph, "void undo()", undo_proc_handler, context);
 
 	obs_source_update(source, NULL);
 	return context;
@@ -277,6 +286,12 @@ void ds_key_click(void *data, const struct obs_key_event *event, bool key_up)
 	UNUSED_PARAMETER(key_up);
 	struct draw_source *context = data;
 	context->shift_down = ((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
+
+	if (!key_up && ((event->modifiers & INTERACT_CONTROL_KEY) == INTERACT_CONTROL_KEY)) {
+		if (event->native_vkey == 'Z' || event->native_vkey == 'z') {
+			context->render_a_active = !context->render_a_active;
+		}
+	}
 }
 
 static void ds_update(void *data, obs_data_t *settings)

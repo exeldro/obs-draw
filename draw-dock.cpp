@@ -100,7 +100,7 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 	toolbar = new QToolBar();
 	ml->addWidget(toolbar);
 
-		auto a = toolbar->addAction(QString::fromUtf8(obs_module_text("Config")), [this] {
+	auto a = toolbar->addAction(QString::fromUtf8(obs_module_text("Config")), [this] {
 		if (!draw_source)
 			return;
 		QMenu menu;
@@ -389,6 +389,37 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 					return true;
 				calldata_t cd = {};
 				proc_handler_call(ph, "clear", &cd);
+				return true;
+			},
+			nullptr);
+	});
+	toolbar->addAction(QString::fromUtf8(obs_module_text("Undo")), [this] {
+		if (draw_source) {
+			proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
+			if (!ph)
+				return;
+			calldata_t d = {};
+			proc_handler_call(ph, "undo", &d);
+		}
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				proc_handler_t *ph = obs_source_get_proc_handler(source);
+				if (!ph)
+					return true;
+				calldata_t cd = {};
+				proc_handler_call(ph, "undo", &cd);
 				return true;
 			},
 			nullptr);
@@ -1122,7 +1153,8 @@ void DrawDock::draw_source_destroy(void *data, calldata_t *cd)
 	window->draw_source = nullptr;
 }
 
-void DrawDock::source_create(void* data, calldata_t* cd) {
+void DrawDock::source_create(void *data, calldata_t *cd)
+{
 	DrawDock *window = static_cast<DrawDock *>(data);
 	if (!window)
 		return;
