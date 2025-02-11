@@ -94,8 +94,91 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 
 	obs_leave_graphics();
 
+	signal_handler_t *sh = obs_get_signal_handler();
+	signal_handler_connect(sh, "source_create", source_create, this);
+
 	toolbar = new QToolBar();
 	ml->addWidget(toolbar);
+
+		auto a = toolbar->addAction(QString::fromUtf8(obs_module_text("Config")), [this] {
+		if (!draw_source)
+			return;
+		QMenu menu;
+
+		auto cursorMenu = menu.addMenu(obs_module_text("Cursor"));
+
+		auto a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("Show")));
+		a->setCheckable(true);
+		obs_data_t *settings = obs_source_get_settings(draw_source);
+		a->setChecked(obs_data_get_bool(settings, "show_cursor"));
+
+		connect(a, &QAction::triggered, [this, a] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_bool(settings, "show_cursor", a->isChecked());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+		cursorMenu->addAction(QString::fromUtf8(obs_module_text("Color")), [this] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_source_get_settings(draw_source);
+			QColor color = color_from_int(obs_data_get_int(settings, "cursor_color"));
+			obs_data_release(settings);
+			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+			color = QColorDialog::getColor(color, main_window, QString::fromUtf8(obs_module_text("CursorColor")));
+			if (!color.isValid())
+				return;
+			if (!draw_source)
+				return;
+			settings = obs_data_create();
+			obs_data_set_int(settings, "cursor_color", color_to_int(color));
+			obs_data_set_string(settings, "cursor_file", "");
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+		cursorMenu->addAction(QString::fromUtf8(obs_module_text("CursorImage")), [this] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_source_get_settings(draw_source);
+			const char *path = obs_data_get_string(settings, "cursor_file");
+			obs_data_release(settings);
+			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+			QString fileName = QFileDialog::getOpenFileName(main_window,
+									QString::fromUtf8(obs_module_text("CursorImage")),
+									QString::fromUtf8(path), image_filter);
+			if (fileName.isEmpty())
+				return;
+			if (!draw_source)
+				return;
+			settings = obs_data_create();
+			obs_data_set_string(settings, "cursor_file", fileName.toUtf8().constData());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+		auto wa = new QWidgetAction(cursorMenu);
+		auto cursorSize = new QDoubleSpinBox();
+		cursorSize->setSuffix("px");
+		cursorSize->setValue(obs_data_get_double(settings, "cursor_size"));
+		cursorSize->setRange(0.0, 1000.0);
+		wa->setDefaultWidget(cursorSize);
+		cursorMenu->addAction(wa);
+
+		connect(cursorSize, &QDoubleSpinBox::valueChanged, [this, cursorSize] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_double(settings, "cursor_size", cursorSize->value());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+
+		obs_data_release(settings);
+		menu.exec(QCursor::pos());
+	});
+	toolbar->widgetForAction(a)->setProperty("themeID", "propertiesIconSmall");
+	toolbar->widgetForAction(a)->setProperty("class", "icon-gear");
 
 	toolCombo = new QComboBox;
 	toolCombo->addItem(obs_module_text("None"), QVariant(TOOL_NONE));
@@ -142,7 +225,7 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			&tool);
 	});
 	toolbar->addWidget(toolCombo);
-	colorAction = toolbar->addAction("", [this] {
+	colorAction = toolbar->addAction(QString::fromUtf8(obs_module_text("ToolColor")), [this] {
 		if (!draw_source)
 			return;
 		obs_data_t *settings = obs_source_get_settings(draw_source);
@@ -280,13 +363,13 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 
 	toolbar->addSeparator();
 	toolbar->addAction(QString::fromUtf8(obs_module_text("Clear")), [this] {
-		if (!draw_source)
-			return;
-		proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
-		if (!ph)
-			return;
-		calldata_t d = {};
-		proc_handler_call(ph, "clear", &d);
+		if (draw_source) {
+			proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
+			if (!ph)
+				return;
+			calldata_t d = {};
+			proc_handler_call(ph, "clear", &d);
+		}
 		obs_source_t *scene_source = obs_frontend_get_current_scene();
 		if (!scene_source)
 			return;
@@ -310,85 +393,6 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			},
 			nullptr);
 	});
-
-	auto a = toolbar->addAction(QString::fromUtf8(obs_module_text("Config")), [this] {
-		if (!draw_source)
-			return;
-		QMenu menu;
-		auto cursorMenu = menu.addMenu(obs_module_text("Cursor"));
-
-		auto a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("Show")));
-		a->setCheckable(true);
-		obs_data_t *settings = obs_source_get_settings(draw_source);
-		a->setChecked(obs_data_get_bool(settings, "show_cursor"));
-
-		connect(a, &QAction::triggered, [this, a] {
-			if (!draw_source)
-				return;
-			obs_data_t *settings = obs_data_create();
-			obs_data_set_bool(settings, "show_cursor", a->isChecked());
-			obs_source_update(draw_source, settings);
-			obs_data_release(settings);
-		});
-		cursorMenu->addAction(QString::fromUtf8(obs_module_text("Color")), [this] {
-			if (!draw_source)
-				return;
-			obs_data_t *settings = obs_source_get_settings(draw_source);
-			QColor color = color_from_int(obs_data_get_int(settings, "cursor_color"));
-			obs_data_release(settings);
-			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-			color = QColorDialog::getColor(color, main_window, QString::fromUtf8(obs_module_text("CursorColor")));
-			if (!color.isValid())
-				return;
-			if (!draw_source)
-				return;
-			settings = obs_data_create();
-			obs_data_set_int(settings, "cursor_color", color_to_int(color));
-			obs_data_set_string(settings, "cursor_file", "");
-			obs_source_update(draw_source, settings);
-			obs_data_release(settings);
-		});
-		cursorMenu->addAction(QString::fromUtf8(obs_module_text("CursorImage")), [this] {
-			if (!draw_source)
-				return;
-			obs_data_t *settings = obs_source_get_settings(draw_source);
-			const char *path = obs_data_get_string(settings, "cursor_file");
-			obs_data_release(settings);
-			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-			QString fileName = QFileDialog::getOpenFileName(main_window,
-									QString::fromUtf8(obs_module_text("CursorImage")),
-									QString::fromUtf8(path), image_filter);
-			if (fileName.isEmpty())
-				return;
-			if (!draw_source)
-				return;
-			settings = obs_data_create();
-			obs_data_set_string(settings, "cursor_file", fileName.toUtf8().constData());
-			obs_source_update(draw_source, settings);
-			obs_data_release(settings);
-		});
-		auto wa = new QWidgetAction(cursorMenu);
-		auto cursorSize = new QDoubleSpinBox();
-		cursorSize->setSuffix("px");
-		cursorSize->setValue(obs_data_get_double(settings, "cursor_size"));
-		cursorSize->setRange(0.0, 1000.0);
-		wa->setDefaultWidget(cursorSize);
-		cursorMenu->addAction(wa);
-
-		connect(cursorSize, &QDoubleSpinBox::valueChanged, [this, cursorSize] {
-			if (!draw_source)
-				return;
-			obs_data_t *settings = obs_data_create();
-			obs_data_set_double(settings, "cursor_size", cursorSize->value());
-			obs_source_update(draw_source, settings);
-			obs_data_release(settings);
-		});
-
-		obs_data_release(settings);
-		menu.exec(QCursor::pos());
-	});
-	toolbar->widgetForAction(a)->setProperty("themeID", "propertiesIconSmall");
-	toolbar->widgetForAction(a)->setProperty("class", "icon-gear");
 
 	preview->setObjectName(QStringLiteral("preview"));
 	preview->setMinimumSize(QSize(24, 24));
@@ -946,7 +950,7 @@ void DrawDock::frontend_event(enum obs_frontend_event event, void *data)
 	}
 }
 
-void DrawDock::CreateDrawSource()
+void DrawDock::CreateDrawSource(obs_source_t *new_source)
 {
 	bool set_output = true;
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
@@ -967,9 +971,12 @@ void DrawDock::CreateDrawSource()
 		signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
 		signal_handler_disconnect(sh, "update", draw_source_update, this);
 		signal_handler_disconnect(sh, "destroy", draw_source_destroy, this);
+	} else if (new_source) {
+		draw_source = obs_source_get_ref(new_source);
 	} else {
 		draw_source = obs_get_source_by_name("Global Draw Source");
 	}
+
 	if (draw_source && strcmp(obs_source_get_unversioned_id(draw_source), "draw_source") != 0) {
 		obs_source_release(draw_source);
 		draw_source = nullptr;
@@ -982,6 +989,14 @@ void DrawDock::CreateDrawSource()
 
 	obs_source_t *scene = obs_frontend_get_current_scene();
 	obs_data_t *settings = config ? obs_data_get_obj(config, "global_draw_source") : nullptr;
+	if (settings && obs_data_has_user_value(settings, "settings")) {
+		if (!draw_source)
+			draw_source = obs_load_source(settings);
+		if (draw_source) {
+			obs_data_release(settings);
+			settings = obs_source_get_settings(draw_source);
+		}
+	}
 	obs_data_release(config);
 	if (!settings) {
 		settings = obs_data_create();
@@ -1063,10 +1078,10 @@ void DrawDock::DestroyDrawSource()
 		return;
 	ensure_directory(path);
 	obs_data_t *config = obs_data_create();
-	obs_data_t *gdss = obs_source_get_settings(source);
-	if (gdss) {
-		obs_data_set_obj(config, "global_draw_source", gdss);
-		obs_data_release(gdss);
+	obs_data_t *gds = obs_save_source(source);
+	if (gds) {
+		obs_data_set_obj(config, "global_draw_source", gds);
+		obs_data_release(gds);
 	}
 	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
 		blog(LOG_INFO, "[Draw Dock] Saved settings");
@@ -1107,6 +1122,23 @@ void DrawDock::draw_source_destroy(void *data, calldata_t *cd)
 	window->draw_source = nullptr;
 }
 
+void DrawDock::source_create(void* data, calldata_t* cd) {
+	DrawDock *window = static_cast<DrawDock *>(data);
+	if (!window)
+		return;
+
+	obs_source_t *source = (obs_source_t *)calldata_ptr(cd, "source");
+	if (!source)
+		return;
+	if (source == window->draw_source)
+		return;
+	if (strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+		return;
+	if (strcmp(obs_source_get_name(source), "Global Draw Source") != 0)
+		return;
+	window->CreateDrawSource(source);
+}
+
 void DrawDock::DrawSourceUpdate()
 {
 	if (!draw_source)
@@ -1122,8 +1154,14 @@ void DrawDock::DrawSourceUpdate()
 	QColor color = color_from_int(obs_data_get_int(settings, "tool_color"));
 	auto w = toolbar->widgetForAction(colorAction);
 	QString s("background: " + color.name() + ";");
-	if (w->styleSheet() != s)
+	if (w->styleSheet() != s) {
 		w->setStyleSheet(s);
+
+		QPixmap pixmap(100, 100);
+		pixmap.fill(color);
+		QIcon colorIcon(pixmap);
+		colorAction->setIcon(colorIcon);
+	}
 
 	auto size = obs_data_get_double(settings, "tool_size");
 	if (abs(toolSizeSpin->value() - size) > 0.1)

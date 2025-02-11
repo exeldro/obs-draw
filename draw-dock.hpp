@@ -57,13 +57,14 @@ private:
 
 	void DrawBackdrop(float cx, float cy);
 
-	void CreateDrawSource();
+	void CreateDrawSource(obs_source_t* source = nullptr);
 	void DestroyDrawSource();
 
 	static void DrawPreview(void *data, uint32_t cx, uint32_t cy);
 	static void frontend_event(enum obs_frontend_event event, void *data);
 	static void draw_source_update(void *data, calldata_t *cd);
 	static void draw_source_destroy(void *data, calldata_t *cd);
+	static void source_create(void *data, calldata_t *cd);
 
 private slots:
 	void DrawSourceUpdate();
