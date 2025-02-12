@@ -104,12 +104,29 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 		if (!draw_source)
 			return;
 		QMenu menu;
+		obs_data_t *settings = obs_source_get_settings(draw_source);
+		auto undoMenu = menu.addMenu(QString::fromUtf8(obs_module_text("UndoMax")));
+		auto undowa = new QWidgetAction(undoMenu);
+		auto maxUndo = new QSpinBox();
+		maxUndo->setValue(obs_data_get_int(settings, "max_undo"));
+		maxUndo->setRange(0, 1000);
+		undowa->setDefaultWidget(maxUndo);
+		undoMenu->addAction(undowa);
 
-		auto cursorMenu = menu.addMenu(obs_module_text("Cursor"));
+		connect(maxUndo, &QSpinBox::valueChanged, [this, maxUndo] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_int(settings, "max_undo", maxUndo->value());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+
+		auto cursorMenu = menu.addMenu(QString::fromUtf8(obs_module_text("Cursor")));
 
 		auto a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("Show")));
 		a->setCheckable(true);
-		obs_data_t *settings = obs_source_get_settings(draw_source);
+
 		a->setChecked(obs_data_get_bool(settings, "show_cursor"));
 
 		connect(a, &QAction::triggered, [this, a] {
@@ -420,6 +437,37 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 					return true;
 				calldata_t cd = {};
 				proc_handler_call(ph, "undo", &cd);
+				return true;
+			},
+			nullptr);
+	});
+	toolbar->addAction(QString::fromUtf8(obs_module_text("Redo")), [this] {
+		if (draw_source) {
+			proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
+			if (!ph)
+				return;
+			calldata_t d = {};
+			proc_handler_call(ph, "redo", &d);
+		}
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				proc_handler_t *ph = obs_source_get_proc_handler(source);
+				if (!ph)
+					return true;
+				calldata_t cd = {};
+				proc_handler_call(ph, "redo", &cd);
 				return true;
 			},
 			nullptr);

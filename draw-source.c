@@ -1,11 +1,36 @@
-#include <obs-module.h>
 #include "draw-source.h"
+#include "version.h"
 #include <graphics/image-file.h>
+#include <obs-module.h>
+#if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 1, 0)
+#include <util/deque.h>
+#define circlebuf_peek_front deque_peek_front
+#define circlebuf_peek_back deque_peek_back
+#define circlebuf_push_front deque_push_front
+#define circlebuf_push_back deque_push_back
+#define circlebuf_pop_front deque_pop_front
+#define circlebuf_pop_back deque_pop_back
+#define circlebuf_init deque_init
+#define circlebuf_free deque_free
+#else
+#include <util/circlebuf.h>
+#endif
 
 struct draw_source {
 	obs_source_t *source;
 	struct vec2 size;
 
+#if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 1, 0)
+	struct deque undo;
+#else
+	struct circlebuf undo;
+#endif
+#if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 1, 0)
+	struct deque redo;
+#else
+	struct circlebuf redo;
+#endif
+	uint32_t max_undo;
 	gs_texrender_t *render_a;
 	gs_texrender_t *render_b;
 	bool render_a_active;
@@ -50,8 +75,57 @@ const char *ds_get_name(void *data)
 	return obs_module_text("Draw");
 }
 
+static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
+{
+	gs_effect_set_vec2(ds->uv_size_param, &ds->size);
+	gs_effect_set_vec2(ds->uv_mouse_param, &ds->mouse_pos);
+	gs_effect_set_vec2(ds->uv_mouse_previous_param, &ds->mouse_previous_pos);
+	gs_effect_set_int(ds->draw_cursor_param, mouse ? (ds->cursor_image ? 2 : 1) : 0);
+	gs_effect_set_vec4(ds->cursor_color_param, &ds->cursor_color);
+	gs_effect_set_float(ds->cursor_size_param, ds->cursor_size);
+	gs_effect_set_texture(ds->cursor_image_param, ds->cursor_image ? ds->cursor_image->image3.image2.image.texture : NULL);
+	gs_effect_set_int(ds->tool_param, ds->tool);
+	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
+	gs_effect_set_float(ds->tool_size_param, ds->tool_size);
+	gs_effect_set_bool(ds->tool_down_param, ds->tool_down);
+	gs_effect_set_bool(ds->shift_down_param, ds->shift_down);
+	gs_effect_set_texture(ds->image_param, tex);
+	while (gs_effect_loop(ds->draw_effect, "Draw"))
+		gs_draw_sprite(tex, 0, (uint32_t)ds->size.x, (uint32_t)ds->size.y);
+}
+
+static void copy_to_undo(struct draw_source *ds)
+{
+	obs_enter_graphics();
+	while (ds->redo.size) {
+		gs_texrender_t *old;
+		circlebuf_pop_front(&ds->redo, &old, sizeof(old));
+		gs_texrender_destroy(old);
+	}
+	gs_texrender_t *texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	if (gs_texrender_begin(texrender, (uint32_t)ds->size.x, (uint32_t)ds->size.y)) {
+		gs_texture_t *tex = gs_texrender_get_texture(ds->render_a_active ? ds->render_a : ds->render_b);
+		gs_blend_state_push();
+		gs_reset_blend_state();
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+
+		gs_ortho(0.0f, ds->size.x, 0.0f, ds->size.y, -100.0f, 100.0f);
+		if (tex)
+			draw_effect(ds, tex, false);
+		gs_blend_state_pop();
+		gs_texrender_end(texrender);
+		circlebuf_push_back(&ds->undo, &texrender, sizeof(texrender));
+		if (ds->undo.size > sizeof(texrender) * ds->max_undo) {
+			circlebuf_pop_front(&ds->undo, &texrender, sizeof(texrender));
+			gs_texrender_destroy(texrender);
+		}
+	}
+	obs_leave_graphics();
+}
+
 void clear(struct draw_source *ds)
 {
+	copy_to_undo(ds);
 	obs_enter_graphics();
 	gs_texrender_reset(ds->render_a_active ? ds->render_b : ds->render_a);
 	if (gs_texrender_begin(ds->render_a_active ? ds->render_b : ds->render_a, (uint32_t)ds->size.x, (uint32_t)ds->size.y)) {
@@ -71,11 +145,56 @@ void clear_proc_handler(void *data, calldata_t *cd)
 	clear(context);
 }
 
+void undo(struct draw_source *ds)
+{
+	if (!ds->undo.size)
+		return;
+
+	gs_texrender_t *texrender;
+	circlebuf_pop_back(&ds->undo, &texrender, sizeof(texrender));
+
+	if (ds->render_a_active) {
+		gs_texrender_t *old = ds->render_a;
+		ds->render_a = texrender;
+		circlebuf_push_back(&ds->redo, &old, sizeof(old));
+	} else {
+		gs_texrender_t *old = ds->render_b;
+		ds->render_b = texrender;
+		circlebuf_push_back(&ds->redo, &old, sizeof(old));
+	}
+}
+
 void undo_proc_handler(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(cd);
-	struct draw_source *context = data;
-	context->render_a_active = !context->render_a_active;
+	struct draw_source *ds = data;
+	undo(ds);
+}
+
+void redo(struct draw_source *ds)
+{
+	if (!ds->redo.size)
+		return;
+
+	gs_texrender_t *texrender = NULL;
+	circlebuf_pop_back(&ds->redo, &texrender, sizeof(texrender));
+
+	if (ds->render_a_active) {
+		gs_texrender_t *old = ds->render_a;
+		ds->render_a = texrender;
+		circlebuf_push_back(&ds->undo, &old, sizeof(old));
+	} else {
+		gs_texrender_t *old = ds->render_b;
+		ds->render_b = texrender;
+		circlebuf_push_back(&ds->undo, &old, sizeof(old));
+	}
+}
+
+void redo_proc_handler(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(cd);
+	struct draw_source *ds = data;
+	redo(ds);
 }
 
 static void *ds_create(obs_data_t *settings, obs_source_t *source)
@@ -83,6 +202,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 	struct draw_source *context = bzalloc(sizeof(struct draw_source));
 	context->source = source;
 
+	context->max_undo = 5;
 	context->size.x = (float)obs_data_get_int(settings, "width");
 	context->size.y = (float)obs_data_get_int(settings, "height");
 	vec4_from_rgba_srgb(&context->cursor_color, 0xFFFFFF00);
@@ -114,6 +234,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	proc_handler_add(ph, "void clear()", clear_proc_handler, context);
 	proc_handler_add(ph, "void undo()", undo_proc_handler, context);
+	proc_handler_add(ph, "void redo()", redo_proc_handler, context);
 
 	obs_source_update(source, NULL);
 	return context;
@@ -123,6 +244,22 @@ static void ds_destroy(void *data)
 {
 	struct draw_source *context = data;
 	bool graphics = false;
+	if (context->undo.size) {
+		graphics = true;
+		obs_enter_graphics();
+	}
+	while (context->undo.size) {
+		gs_texrender_t *texrender;
+		circlebuf_pop_front(&context->undo, &texrender, sizeof(texrender));
+		gs_texrender_destroy(texrender);
+	}
+	circlebuf_free(&context->undo);
+	while (context->redo.size) {
+		gs_texrender_t *texrender;
+		circlebuf_pop_front(&context->redo, &texrender, sizeof(texrender));
+		gs_texrender_destroy(texrender);
+	}
+	circlebuf_free(&context->redo);
 	if (context->render_a) {
 		if (!graphics) {
 			graphics = true;
@@ -164,25 +301,6 @@ static uint32_t ds_get_height(void *data)
 	return (uint32_t)context->size.y;
 }
 
-static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
-{
-	gs_effect_set_vec2(ds->uv_size_param, &ds->size);
-	gs_effect_set_vec2(ds->uv_mouse_param, &ds->mouse_pos);
-	gs_effect_set_vec2(ds->uv_mouse_previous_param, &ds->mouse_previous_pos);
-	gs_effect_set_int(ds->draw_cursor_param, mouse ? (ds->cursor_image ? 2 : 1) : 0);
-	gs_effect_set_vec4(ds->cursor_color_param, &ds->cursor_color);
-	gs_effect_set_float(ds->cursor_size_param, ds->cursor_size);
-	gs_effect_set_texture(ds->cursor_image_param, ds->cursor_image ? ds->cursor_image->image3.image2.image.texture : NULL);
-	gs_effect_set_int(ds->tool_param, ds->tool);
-	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
-	gs_effect_set_float(ds->tool_size_param, ds->tool_size);
-	gs_effect_set_bool(ds->tool_down_param, ds->tool_down);
-	gs_effect_set_bool(ds->shift_down_param, ds->shift_down);
-	gs_effect_set_texture(ds->image_param, tex);
-	while (gs_effect_loop(ds->draw_effect, "Draw"))
-		gs_draw_sprite(tex, 0, (uint32_t)ds->size.x, (uint32_t)ds->size.y);
-}
-
 static void ds_video_render(void *data, gs_effect_t *effect)
 {
 	UNUSED_PARAMETER(effect);
@@ -208,14 +326,6 @@ static void apply_tool(struct draw_source *ds)
 				       (uint32_t)ds->size.y)) {
 			gs_blend_state_push();
 			gs_reset_blend_state();
-			//if (ds->tool == TOOL_ERASER) {
-			//	gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_SRCALPHA,
-			//				   GS_BLEND_INVSRCALPHA);
-			//} else {
-			//	//gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
-			//	gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_SRCALPHA,
-			//				   GS_BLEND_INVSRCALPHA);
-			//}
 			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
 
 			gs_ortho(0.0f, ds->size.x, 0.0f, ds->size.y, -100.0f, 100.0f);
@@ -266,14 +376,18 @@ void ds_mouse_click(void *data, const struct obs_mouse_event *event, int32_t typ
 		context->mouse_previous_pos.x = -1.0f;
 		context->mouse_previous_pos.y = -1.0f;
 	}
+	if (!mouse_up && draw)
+		copy_to_undo(context);
 
 	if (!mouse_up && type == 0) {
 		context->tool_down = true;
 		if (draw)
 			apply_tool(context);
 	} else if (context->tool_down) {
-		if (!draw && type == 0)
+		if (!draw && type == 0) {
+			copy_to_undo(context);
 			apply_tool(context);
+		}
 		context->tool_down = false;
 	}
 	if (!draw) {
@@ -289,7 +403,9 @@ void ds_key_click(void *data, const struct obs_key_event *event, bool key_up)
 
 	if (!key_up && ((event->modifiers & INTERACT_CONTROL_KEY) == INTERACT_CONTROL_KEY)) {
 		if (event->native_vkey == 'Z' || event->native_vkey == 'z') {
-			context->render_a_active = !context->render_a_active;
+			undo(context);
+		} else if (event->native_vkey == 'Y' || event->native_vkey == 'y') {
+			redo(context);
 		}
 	}
 }
@@ -297,6 +413,7 @@ void ds_key_click(void *data, const struct obs_key_event *event, bool key_up)
 static void ds_update(void *data, obs_data_t *settings)
 {
 	struct draw_source *context = data;
+	context->max_undo = (uint32_t)obs_data_get_int(settings, "max_undo");
 	context->size.x = (float)obs_data_get_int(settings, "width");
 	context->size.y = (float)obs_data_get_int(settings, "height");
 	context->tool = (uint32_t)obs_data_get_int(settings, "tool");
@@ -409,7 +526,14 @@ static obs_properties_t *ds_get_properties(void *data)
 	obs_property_float_set_suffix(p, "px");
 	obs_properties_add_path(props, "cursor_file", obs_module_text("CursorFile"), OBS_PATH_FILE, image_filter, NULL);
 
+	obs_properties_add_int(props, "max_undo", obs_module_text("UndoMax"), 1, 10000, 1);
+
 	obs_properties_add_button2(props, "clear", obs_module_text("Clear"), clear_property_button, data);
+
+	obs_properties_add_text(props, "plugin_info",
+				"<a href=\"https://obsproject.com/forum/resources/draw.2081/\">Draw</a> (" PROJECT_VERSION
+				") by <a href=\"https://www.exeldro.com\">Exeldro</a>",
+				OBS_TEXT_INFO);
 
 	return props;
 }
@@ -424,6 +548,7 @@ static void ds_get_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "tool_alpha", 100.0);
 	obs_data_set_default_bool(settings, "show_cursor", true);
 	obs_data_set_default_double(settings, "cursor_size", 10);
+	obs_data_set_default_int(settings, "max_undo", 5);
 }
 
 static void ds_video_tick(void *data, float seconds)
