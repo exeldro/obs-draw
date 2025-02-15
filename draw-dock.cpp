@@ -1,5 +1,6 @@
 #include "draw-dock.hpp"
 #include "draw-source.h"
+#include "name-dialog.hpp"
 #include "version.h"
 #include <graphics/matrix4.h>
 #include <obs-module.h>
@@ -94,6 +95,12 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 
 	obs_leave_graphics();
 
+	const auto path = obs_module_config_path("config.json");
+	config = obs_data_create_from_json_file_safe(path, "bak");
+	bfree(path);
+	if (!config)
+		config = obs_data_create();
+
 	signal_handler_t *sh = obs_get_signal_handler();
 	signal_handler_connect(sh, "source_create", source_create, this);
 
@@ -104,24 +111,63 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 		if (!draw_source)
 			return;
 		QMenu menu;
-		obs_data_t *settings = obs_source_get_settings(draw_source);
-		auto undoMenu = menu.addMenu(QString::fromUtf8(obs_module_text("UndoMax")));
-		auto undowa = new QWidgetAction(undoMenu);
-		auto maxUndo = new QSpinBox();
-		maxUndo->setValue(obs_data_get_int(settings, "max_undo"));
-		maxUndo->setRange(0, 1000);
-		undowa->setDefaultWidget(maxUndo);
-		undoMenu->addAction(undowa);
 
-		connect(maxUndo, &QSpinBox::valueChanged, [this, maxUndo] {
-			if (!draw_source)
+		auto toolMenu = menu.addMenu(QString::fromUtf8(obs_module_text("FavoriteTools")));
+
+		obs_data_array_t *tools = obs_data_get_array(config, "tools");
+		auto count = obs_data_array_count(tools);
+		for (size_t i = 0; i < count; i++) {
+			obs_data_t *ts = obs_data_array_item(tools, i);
+			if (!ts)
+				continue;
+			auto tm = toolMenu->addMenu(QString::fromUtf8(obs_data_get_string(ts, "tool_name")));
+			tm->addAction(QString::fromUtf8(obs_module_text("Remove")), [this, tools, i] {
+				toolbar->removeAction(toolbar->actions().at(i + 1));
+				obs_data_array_erase(tools, i);
+				SaveConfig();
+			});
+			obs_data_release(ts);
+		}
+		obs_data_array_release(tools);
+		if (count)
+			toolMenu->addSeparator();
+		toolMenu->addAction(QString::fromUtf8(obs_module_text("AddCurrent")), [this] {
+			QAction *tca = nullptr;
+			foreach(QAction * action, toolbar->actions())
+			{
+				if (toolCombo == toolbar->widgetForAction(action)) {
+					tca = action;
+				}
+			}
+			if (!tca)
 				return;
+			std::string name;
+			if (!NameDialog::AskForName(this, QString::fromUtf8(obs_module_text("ToolName")), name))
+				return;
+			if (name.empty())
+				return;
+
+			obs_data_array_t *tools = obs_data_get_array(config, "tools");
+			if (!tools) {
+				tools = obs_data_array_create();
+				obs_data_set_array(config, "tools", tools);
+			}
+			obs_data_t *gdss = obs_source_get_settings(draw_source);
 			obs_data_t *settings = obs_data_create();
-			obs_data_set_int(settings, "max_undo", maxUndo->value());
-			obs_source_update(draw_source, settings);
+			obs_data_set_string(settings, "tool_name", name.c_str());
+			obs_data_set_int(settings, "tool", obs_data_get_int(gdss, "tool"));
+			obs_data_set_int(settings, "tool_color", obs_data_get_int(gdss, "tool_color"));
+			obs_data_set_double(settings, "tool_size", obs_data_get_double(gdss, "tool_size"));
+			obs_data_set_double(settings, "tool_alpha", obs_data_get_double(gdss, "tool_alpha"));
+			obs_data_release(gdss);
+			obs_data_array_push_back(tools, settings);
+			obs_data_array_release(tools);
+			toolbar->insertAction(tca, AddFavoriteTool(settings));
 			obs_data_release(settings);
+			SaveConfig();
 		});
 
+		obs_data_t *settings = obs_source_get_settings(draw_source);
 		auto cursorMenu = menu.addMenu(QString::fromUtf8(obs_module_text("Cursor")));
 
 		auto a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("Show")));
@@ -190,12 +236,104 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			obs_source_update(draw_source, settings);
 			obs_data_release(settings);
 		});
+		menu.addSeparator();
+
+		menu.addAction(QString::fromUtf8(obs_module_text("Undo")), [this] {
+			if (draw_source) {
+				proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
+				if (!ph)
+					return;
+				calldata_t d = {};
+				proc_handler_call(ph, "undo", &d);
+			}
+			obs_source_t *scene_source = obs_frontend_get_current_scene();
+			if (!scene_source)
+				return;
+			obs_scene_t *scene = obs_scene_from_source(scene_source);
+			obs_source_release(scene_source);
+			if (!scene)
+				return;
+
+			obs_scene_enum_items(
+				scene,
+				[](obs_scene_t *, obs_sceneitem_t *item, void *) {
+					auto source = obs_sceneitem_get_source(item);
+					if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+						return true;
+					proc_handler_t *ph = obs_source_get_proc_handler(source);
+					if (!ph)
+						return true;
+					calldata_t cd = {};
+					proc_handler_call(ph, "undo", &cd);
+					return true;
+				},
+				nullptr);
+		});
+
+		menu.addAction(QString::fromUtf8(obs_module_text("Redo")), [this] {
+			if (draw_source) {
+				proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
+				if (!ph)
+					return;
+				calldata_t d = {};
+				proc_handler_call(ph, "redo", &d);
+			}
+			obs_source_t *scene_source = obs_frontend_get_current_scene();
+			if (!scene_source)
+				return;
+			obs_scene_t *scene = obs_scene_from_source(scene_source);
+			obs_source_release(scene_source);
+			if (!scene)
+				return;
+
+			obs_scene_enum_items(
+				scene,
+				[](obs_scene_t *, obs_sceneitem_t *item, void *) {
+					auto source = obs_sceneitem_get_source(item);
+					if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+						return true;
+					proc_handler_t *ph = obs_source_get_proc_handler(source);
+					if (!ph)
+						return true;
+					calldata_t cd = {};
+					proc_handler_call(ph, "redo", &cd);
+					return true;
+				},
+				nullptr);
+		});
+		auto undoMenu = menu.addMenu(QString::fromUtf8(obs_module_text("UndoMax")));
+		auto undowa = new QWidgetAction(undoMenu);
+		auto maxUndo = new QSpinBox();
+		maxUndo->setValue(obs_data_get_int(settings, "max_undo"));
+		maxUndo->setRange(0, 1000);
+		undowa->setDefaultWidget(maxUndo);
+		undoMenu->addAction(undowa);
+
+		connect(maxUndo, &QSpinBox::valueChanged, [this, maxUndo] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_int(settings, "max_undo", maxUndo->value());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
 
 		obs_data_release(settings);
 		menu.exec(QCursor::pos());
 	});
 	toolbar->widgetForAction(a)->setProperty("themeID", "propertiesIconSmall");
 	toolbar->widgetForAction(a)->setProperty("class", "icon-gear");
+
+	obs_data_array_t *tools = obs_data_get_array(config, "tools");
+	auto count = obs_data_array_count(tools);
+	for (size_t i = 0; i < count; i++) {
+		obs_data_t *ts = obs_data_array_item(tools, i);
+		if (!ts)
+			continue;
+		toolbar->addAction(AddFavoriteTool(ts));
+		obs_data_release(ts);
+	}
+	obs_data_array_release(tools);
 
 	toolCombo = new QComboBox;
 	toolCombo->addItem(obs_module_text("None"), QVariant(TOOL_NONE));
@@ -410,68 +548,6 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			},
 			nullptr);
 	});
-	toolbar->addAction(QString::fromUtf8(obs_module_text("Undo")), [this] {
-		if (draw_source) {
-			proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
-			if (!ph)
-				return;
-			calldata_t d = {};
-			proc_handler_call(ph, "undo", &d);
-		}
-		obs_source_t *scene_source = obs_frontend_get_current_scene();
-		if (!scene_source)
-			return;
-		obs_scene_t *scene = obs_scene_from_source(scene_source);
-		obs_source_release(scene_source);
-		if (!scene)
-			return;
-
-		obs_scene_enum_items(
-			scene,
-			[](obs_scene_t *, obs_sceneitem_t *item, void *) {
-				auto source = obs_sceneitem_get_source(item);
-				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
-					return true;
-				proc_handler_t *ph = obs_source_get_proc_handler(source);
-				if (!ph)
-					return true;
-				calldata_t cd = {};
-				proc_handler_call(ph, "undo", &cd);
-				return true;
-			},
-			nullptr);
-	});
-	toolbar->addAction(QString::fromUtf8(obs_module_text("Redo")), [this] {
-		if (draw_source) {
-			proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
-			if (!ph)
-				return;
-			calldata_t d = {};
-			proc_handler_call(ph, "redo", &d);
-		}
-		obs_source_t *scene_source = obs_frontend_get_current_scene();
-		if (!scene_source)
-			return;
-		obs_scene_t *scene = obs_scene_from_source(scene_source);
-		obs_source_release(scene_source);
-		if (!scene)
-			return;
-
-		obs_scene_enum_items(
-			scene,
-			[](obs_scene_t *, obs_sceneitem_t *item, void *) {
-				auto source = obs_sceneitem_get_source(item);
-				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
-					return true;
-				proc_handler_t *ph = obs_source_get_proc_handler(source);
-				if (!ph)
-					return true;
-				calldata_t cd = {};
-				proc_handler_call(ph, "redo", &cd);
-				return true;
-			},
-			nullptr);
-	});
 
 	preview->setObjectName(QStringLiteral("preview"));
 	preview->setMinimumSize(QSize(24, 24));
@@ -501,6 +577,7 @@ DrawDock::~DrawDock()
 	obs_enter_graphics();
 	gs_vertexbuffer_destroy(box);
 	obs_leave_graphics();
+	obs_data_release(config);
 }
 
 static inline void GetScaleAndCenterPos(int baseCX, int baseCY, int windowCX, int windowCY, int &x, int &y, float &scale)
@@ -1062,10 +1139,6 @@ void DrawDock::CreateDrawSource(obs_source_t *new_source)
 		return;
 	}
 
-	const auto path = obs_module_config_path("config.json");
-	obs_data_t *config = obs_data_create_from_json_file_safe(path, "bak");
-	bfree(path);
-
 	obs_source_t *scene = obs_frontend_get_current_scene();
 	obs_data_t *settings = config ? obs_data_get_obj(config, "global_draw_source") : nullptr;
 	if (settings && obs_data_has_user_value(settings, "settings")) {
@@ -1076,7 +1149,6 @@ void DrawDock::CreateDrawSource(obs_source_t *new_source)
 			settings = obs_source_get_settings(draw_source);
 		}
 	}
-	obs_data_release(config);
 	if (!settings) {
 		settings = obs_data_create();
 		obs_data_set_int(settings, "tool", 1);
@@ -1152,23 +1224,12 @@ void DrawDock::DestroyDrawSource()
 	signal_handler_disconnect(sh, "update", draw_source_update, this);
 	signal_handler_disconnect(sh, "destroy", draw_source_destroy, this);
 
-	char *path = obs_module_config_path("config.json");
-	if (!path)
-		return;
-	ensure_directory(path);
-	obs_data_t *config = obs_data_create();
 	obs_data_t *gds = obs_save_source(source);
 	if (gds) {
 		obs_data_set_obj(config, "global_draw_source", gds);
 		obs_data_release(gds);
 	}
-	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
-		blog(LOG_INFO, "[Draw Dock] Saved settings");
-	} else {
-		blog(LOG_ERROR, "[Draw Dock] Failed saving settings");
-	}
-	obs_data_release(config);
-	bfree(path);
+	SaveConfig();
 
 	for (uint32_t i = 0; i < MAX_CHANNELS; i++) {
 		obs_source_t *s = obs_get_output_source(i);
@@ -1179,6 +1240,20 @@ void DrawDock::DestroyDrawSource()
 	}
 
 	obs_source_release(source);
+}
+
+void DrawDock::SaveConfig()
+{
+	char *path = obs_module_config_path("config.json");
+	if (!path)
+		return;
+	ensure_directory(path);
+	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
+		blog(LOG_INFO, "[Draw Dock] Saved settings");
+	} else {
+		blog(LOG_ERROR, "[Draw Dock] Failed saving settings");
+	}
+	bfree(path);
 }
 
 void DrawDock::draw_source_update(void *data, calldata_t *cd)
@@ -1313,4 +1388,36 @@ void DrawDock::SceneChanged()
 			return true;
 		},
 		this);
+}
+
+QAction *DrawDock::AddFavoriteTool(obs_data_t *settings)
+{
+	auto action = new QAction(QString::fromUtf8(obs_data_get_string(settings, "tool_name")));
+	connect(action, &QAction::triggered, [this, settings] { ApplyFavoriteTool(settings); });
+	return action;
+}
+
+void DrawDock::ApplyFavoriteTool(obs_data_t *settings)
+{
+	if (draw_source)
+		obs_source_update(draw_source, settings);
+	obs_source_t *scene_source = obs_frontend_get_current_scene();
+	if (!scene_source)
+		return;
+	obs_scene_t *scene = obs_scene_from_source(scene_source);
+	obs_source_release(scene_source);
+	if (!scene)
+		return;
+
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+			auto source = obs_sceneitem_get_source(item);
+			if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+				return true;
+			obs_data_t *settings = (obs_data_t *)data;
+			obs_source_update(source, settings);
+			return true;
+		},
+		settings);
 }

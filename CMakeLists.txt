@@ -26,6 +26,8 @@ target_sources(${PROJECT_NAME} PRIVATE
     draw-source.h
     qt-display.cpp
     qt-display.hpp
+    name-dialog.cpp
+    name-dialog.hpp
     display-helpers.hpp
 	version.h)
 

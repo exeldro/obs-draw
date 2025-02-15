@@ -40,6 +40,8 @@ private:
 	QDoubleSpinBox *alphaSpin;
 	QCheckBox *eraseCheckbox;
 
+	obs_data_t *config;
+
 	float zoom = 1.0f;
 	float scrollX = 0.5f;
 	float scrollY = 0.5f;
@@ -59,6 +61,11 @@ private:
 
 	void CreateDrawSource(obs_source_t *source = nullptr);
 	void DestroyDrawSource();
+
+	void SaveConfig();
+
+	QAction *AddFavoriteTool(obs_data_t *settings = nullptr);
+	void ApplyFavoriteTool(obs_data_t *settings = nullptr);
 
 	static void DrawPreview(void *data, uint32_t cx, uint32_t cy);
 	static void frontend_event(enum obs_frontend_event event, void *data);
