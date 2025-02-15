@@ -9,6 +9,8 @@
 #include <QGuiApplication>
 #include <QMainWindow>
 #include <QMenu>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidgetAction>
@@ -120,7 +122,7 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			obs_data_t *ts = obs_data_array_item(tools, i);
 			if (!ts)
 				continue;
-			auto tm = toolMenu->addMenu(QString::fromUtf8(obs_data_get_string(ts, "tool_name")));
+			auto tm = toolMenu->addMenu(CreateToolIcon(ts), QString::fromUtf8(obs_data_get_string(ts, "tool_name")));
 			tm->addAction(QString::fromUtf8(obs_module_text("Remove")), [this, tools, i] {
 				toolbar->removeAction(toolbar->actions().at(i + 1));
 				obs_data_array_erase(tools, i);
@@ -1392,7 +1394,7 @@ void DrawDock::SceneChanged()
 
 QAction *DrawDock::AddFavoriteTool(obs_data_t *settings)
 {
-	auto action = new QAction(QString::fromUtf8(obs_data_get_string(settings, "tool_name")));
+	auto action = new QAction(CreateToolIcon(settings), QString::fromUtf8(obs_data_get_string(settings, "tool_name")));
 	connect(action, &QAction::triggered, [this, settings] { ApplyFavoriteTool(settings); });
 	return action;
 }
@@ -1420,4 +1422,64 @@ void DrawDock::ApplyFavoriteTool(obs_data_t *settings)
 			return true;
 		},
 		settings);
+}
+
+QIcon DrawDock::CreateToolIcon(obs_data_t *settings)
+{
+	auto pixmap = QPixmap(256, 256);
+
+	auto toolColor = color_from_int(obs_data_get_int(settings, "tool_color"));
+	auto tool = obs_data_get_int(settings, "tool");
+	auto alpha = obs_data_get_double(settings, "tool_alpha");
+	auto toolSize = obs_data_get_double(settings, "tool_size") * 2.0;
+	if (alpha >= 0.0) {
+		pixmap.fill(QColor(0, 0, 0, 0));
+		toolColor.setAlphaF(alpha / 100.0);
+	} else {
+		pixmap.fill(toolColor);
+		toolColor = palette().button().color();
+	}
+
+	if (tool == TOOL_PENCIL) {
+		auto painter = QPainter(&pixmap);
+		painter.setPen(QPen(toolColor, toolSize, Qt::SolidLine, Qt::RoundCap));
+		QPainterPath path;
+		path.moveTo(toolSize, toolSize);
+		path.cubicTo(64, toolSize, 128, 64, 128, 128);
+		path.cubicTo(128, 192, 256.0 - toolSize, 192, 256.0 - toolSize, 256.0 - toolSize);
+		painter.drawPath(path);
+	} else if (tool == TOOL_BRUSH) {
+		auto painter = QPainter(&pixmap);
+		QPainterPath path;
+		path.moveTo(toolSize, toolSize);
+		path.cubicTo(64, toolSize, 128, 64, 128, 128);
+		path.cubicTo(128, 192, 256.0 - toolSize, 192, 256.0 - toolSize, 256.0 - toolSize);
+		for (auto step = toolSize; step > 0.0; step -= 1.0) {
+			auto c = toolColor;
+			c.setAlphaF(toolColor.alphaF() / toolSize);
+			painter.setPen(QPen(c, toolSize - step, Qt::SolidLine, Qt::RoundCap));
+			painter.drawPath(path);
+		}
+	} else if (tool == TOOL_LINE) {
+		auto painter = QPainter(&pixmap);
+		painter.setPen(QPen(toolColor, toolSize, Qt::SolidLine, Qt::RoundCap));
+		painter.drawLine(128, toolSize / 2.0, 128, 256.0 - toolSize / 2.0);
+	} else if (tool == TOOL_RECTANGLE_OUTLINE) {
+		auto painter = QPainter(&pixmap);
+		painter.setPen(QPen(toolColor, toolSize));
+		painter.drawRect(QRect(toolSize / 2.0, toolSize / 2.0, 256.0 - toolSize, 256.0 - toolSize));
+	} else if (tool == TOOL_RECTANGLE_FILL) {
+		auto painter = QPainter(&pixmap);
+		painter.fillRect(QRect(4, 4, 248, 248), toolColor);
+	} else if (tool == TOOL_ELLIPSE_OUTLINE) {
+		auto painter = QPainter(&pixmap);
+		painter.setPen(QPen(toolColor, toolSize));
+		painter.drawEllipse(QRect(toolSize / 2.0, toolSize / 2.0, 256.0 - toolSize, 256.0 - toolSize));
+	} else if (tool == TOOL_ELLIPSE_FILL) {
+		auto painter = QPainter(&pixmap);
+		painter.setPen(QPen(toolColor, 120));
+		painter.drawEllipse(QRect(68, 68, 120, 120));
+	}
+
+	return QIcon(pixmap);
 }

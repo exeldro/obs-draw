@@ -66,6 +66,7 @@ private:
 
 	QAction *AddFavoriteTool(obs_data_t *settings = nullptr);
 	void ApplyFavoriteTool(obs_data_t *settings = nullptr);
+	QIcon CreateToolIcon(obs_data_t *settings);
 
 	static void DrawPreview(void *data, uint32_t cx, uint32_t cy);
 	static void frontend_event(enum obs_frontend_event event, void *data);
