@@ -123,8 +123,30 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			if (!ts)
 				continue;
 			auto tm = toolMenu->addMenu(CreateToolIcon(ts), QString::fromUtf8(obs_data_get_string(ts, "tool_name")));
-			tm->addAction(QString::fromUtf8(obs_module_text("Remove")), [this, tools, i] {
-				toolbar->removeAction(toolbar->actions().at(i + 1));
+			tm->addAction(QString::fromUtf8(obs_module_text("SetToCurrent")), [this, i, ts] {
+				if (!draw_source)
+					return;
+				obs_data_t *gdss = obs_source_get_settings(draw_source);
+				obs_data_t *settings = obs_data_get_obj(ts, "settings");
+				obs_data_set_int(settings, "tool", obs_data_get_int(gdss, "tool"));
+				obs_data_set_int(settings, "tool_color", obs_data_get_int(gdss, "tool_color"));
+				obs_data_set_double(settings, "tool_size", obs_data_get_double(gdss, "tool_size"));
+				obs_data_set_double(settings, "tool_alpha", obs_data_get_double(gdss, "tool_alpha"));
+				obs_data_release(settings);
+				obs_data_release(gdss);
+				auto action = toolbar->actions().at(i + 1);
+				action->setIcon(CreateToolIcon(ts));
+			});
+			tm->addAction(QString::fromUtf8(obs_module_text("Remove")), [this, tools, i, ts] {
+				auto action = toolbar->actions().at(i + 1);
+				for (auto j = favoriteToolHotkeys.begin(); j != favoriteToolHotkeys.end(); j++) {
+					if (j->second.first == action || j->second.second == ts) {
+						obs_hotkey_unregister(j->first);
+						favoriteToolHotkeys.erase(j);
+						break;
+					}
+				}
+				toolbar->removeAction(action);
 				obs_data_array_erase(tools, i);
 				SaveConfig();
 			});
@@ -155,17 +177,20 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 				obs_data_set_array(config, "tools", tools);
 			}
 			obs_data_t *gdss = obs_source_get_settings(draw_source);
+			obs_data_t *tool = obs_data_create();
+			obs_data_set_string(tool, "tool_name", name.c_str());
 			obs_data_t *settings = obs_data_create();
-			obs_data_set_string(settings, "tool_name", name.c_str());
 			obs_data_set_int(settings, "tool", obs_data_get_int(gdss, "tool"));
 			obs_data_set_int(settings, "tool_color", obs_data_get_int(gdss, "tool_color"));
 			obs_data_set_double(settings, "tool_size", obs_data_get_double(gdss, "tool_size"));
 			obs_data_set_double(settings, "tool_alpha", obs_data_get_double(gdss, "tool_alpha"));
 			obs_data_release(gdss);
-			obs_data_array_push_back(tools, settings);
-			obs_data_array_release(tools);
-			toolbar->insertAction(tca, AddFavoriteTool(settings));
+			obs_data_set_obj(tool, "settings", settings);
 			obs_data_release(settings);
+			obs_data_array_push_back(tools, tool);
+			obs_data_array_release(tools);
+			toolbar->insertAction(tca, AddFavoriteTool(tool));
+			obs_data_release(tool);
 			SaveConfig();
 		});
 
@@ -338,14 +363,20 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 	obs_data_array_release(tools);
 
 	toolCombo = new QComboBox;
-	toolCombo->addItem(obs_module_text("None"), QVariant(TOOL_NONE));
-	toolCombo->addItem(obs_module_text("Pencil"), QVariant(TOOL_PENCIL));
-	toolCombo->addItem(obs_module_text("Brush"), QVariant(TOOL_BRUSH));
-	toolCombo->addItem(obs_module_text("Line"), QVariant(TOOL_LINE));
-	toolCombo->addItem(obs_module_text("RectangleOutline"), QVariant(TOOL_RECTANGLE_OUTLINE));
-	toolCombo->addItem(obs_module_text("RectangleFill"), QVariant(TOOL_RECTANGLE_FILL));
-	toolCombo->addItem(obs_module_text("EllipseOutline"), QVariant(TOOL_ELLIPSE_OUTLINE));
-	toolCombo->addItem(obs_module_text("EllipseFill"), QVariant(TOOL_ELLIPSE_FILL));
+	toolCombo->setMinimumWidth(60);
+	auto demoColor = palette().buttonText().color();
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_NONE), obs_module_text("None"), QVariant(TOOL_NONE));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_PENCIL), obs_module_text("Pencil"), QVariant(TOOL_PENCIL));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_BRUSH), obs_module_text("Brush"), QVariant(TOOL_BRUSH));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_LINE), obs_module_text("Line"), QVariant(TOOL_LINE));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_RECTANGLE_OUTLINE), obs_module_text("RectangleOutline"),
+			   QVariant(TOOL_RECTANGLE_OUTLINE));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_RECTANGLE_FILL), obs_module_text("RectangleFill"),
+			   QVariant(TOOL_RECTANGLE_FILL));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_ELLIPSE_OUTLINE), obs_module_text("EllipseOutline"),
+			   QVariant(TOOL_ELLIPSE_OUTLINE));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_ELLIPSE_FILL), obs_module_text("EllipseFill"),
+			   QVariant(TOOL_ELLIPSE_FILL));
 	connect(toolCombo, &QComboBox::currentIndexChanged, [this] {
 		if (!draw_source)
 			return;
@@ -472,6 +503,7 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 	alphaSpin = new QDoubleSpinBox;
 	alphaSpin->setRange(0.0, 100.0);
 	alphaSpin->setSuffix("%");
+	alphaSpin->setValue(50.0);
 	toolbar->addWidget(alphaSpin);
 
 	eraseCheckbox = new QCheckBox(QString::fromUtf8(obs_module_text("Erase")));
@@ -574,6 +606,10 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 
 DrawDock::~DrawDock()
 {
+	for (auto i = favoriteToolHotkeys.begin(); i != favoriteToolHotkeys.end(); i++) {
+		obs_hotkey_unregister(i->first);
+	}
+	favoriteToolHotkeys.clear();
 	DestroyDrawSource();
 	delete eventFilter;
 	obs_enter_graphics();
@@ -1250,6 +1286,25 @@ void DrawDock::SaveConfig()
 	if (!path)
 		return;
 	ensure_directory(path);
+
+	obs_data_array_t *tools = obs_data_get_array(config, "tools");
+	size_t count = obs_data_array_count(tools);
+	for (size_t i = 0; i < count; i++) {
+		obs_data_t *ts = obs_data_array_item(tools, i);
+		if (!ts)
+			continue;
+
+		for (auto j = favoriteToolHotkeys.begin(); j != favoriteToolHotkeys.end(); j++) {
+			if (j->second.second == ts) {
+				obs_data_array_t *hotkeys = obs_hotkey_save(j->first);
+				obs_data_set_array(ts, "hotkeys", hotkeys);
+				obs_data_array_release(hotkeys);
+			}
+		}
+		obs_data_release(ts);
+	}
+	obs_data_array_release(tools);
+
 	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
 		blog(LOG_INFO, "[Draw Dock] Saved settings");
 	} else {
@@ -1392,11 +1447,43 @@ void DrawDock::SceneChanged()
 		this);
 }
 
-QAction *DrawDock::AddFavoriteTool(obs_data_t *settings)
+QAction *DrawDock::AddFavoriteTool(obs_data_t *tool)
 {
-	auto action = new QAction(CreateToolIcon(settings), QString::fromUtf8(obs_data_get_string(settings, "tool_name")));
+	auto toolName = obs_data_get_string(tool, "tool_name");
+	obs_data_t *settings = obs_data_get_obj(tool, "settings");
+	auto action = new QAction(CreateToolIcon(tool), QString::fromUtf8(toolName));
 	connect(action, &QAction::triggered, [this, settings] { ApplyFavoriteTool(settings); });
+	obs_data_release(settings);
+	std::string hotKeyName = "DrawDockFavoriteTool.";
+	hotKeyName += toolName;
+	std::string hotKeyDescription = obs_module_text("DrawFavoriteTool");
+	hotKeyDescription += " ";
+	hotKeyDescription += toolName;
+	auto hotkeyId = obs_hotkey_register_frontend(hotKeyName.c_str(), hotKeyDescription.c_str(), favorite_tool_hotkey, this);
+	auto hotkeys = obs_data_get_array(tool, "hotkeys");
+	if (hotkeys) {
+		obs_hotkey_load(hotkeyId, hotkeys);
+		obs_data_array_release(hotkeys);
+	}
+	favoriteToolHotkeys.emplace(hotkeyId, std::pair<QAction *, obs_data_t *>(action, tool));
 	return action;
+}
+
+void DrawDock::favorite_tool_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
+{
+	UNUSED_PARAMETER(hotkey);
+	if (!pressed)
+		return;
+
+	DrawDock *window = static_cast<DrawDock *>(data);
+
+	auto i = window->favoriteToolHotkeys.find(id);
+	if (i == window->favoriteToolHotkeys.end())
+		return;
+
+	obs_data_t *settings = obs_data_get_obj(i->second.second, "settings");
+	window->ApplyFavoriteTool(settings);
+	obs_data_release(settings);
 }
 
 void DrawDock::ApplyFavoriteTool(obs_data_t *settings)
@@ -1424,14 +1511,9 @@ void DrawDock::ApplyFavoriteTool(obs_data_t *settings)
 		settings);
 }
 
-QIcon DrawDock::CreateToolIcon(obs_data_t *settings)
+QIcon DrawDock::CreateToolIcon(QColor toolColor, uint32_t tool, double alpha, double toolSize)
 {
 	auto pixmap = QPixmap(256, 256);
-
-	auto toolColor = color_from_int(obs_data_get_int(settings, "tool_color"));
-	auto tool = obs_data_get_int(settings, "tool");
-	auto alpha = obs_data_get_double(settings, "tool_alpha");
-	auto toolSize = obs_data_get_double(settings, "tool_size") * 2.0;
 	if (alpha >= 0.0) {
 		pixmap.fill(QColor(0, 0, 0, 0));
 		toolColor.setAlphaF(alpha / 100.0);
@@ -1444,16 +1526,16 @@ QIcon DrawDock::CreateToolIcon(obs_data_t *settings)
 		auto painter = QPainter(&pixmap);
 		painter.setPen(QPen(toolColor, toolSize, Qt::SolidLine, Qt::RoundCap));
 		QPainterPath path;
-		path.moveTo(toolSize, toolSize);
-		path.cubicTo(64, toolSize, 128, 64, 128, 128);
-		path.cubicTo(128, 192, 256.0 - toolSize, 192, 256.0 - toolSize, 256.0 - toolSize);
+		path.moveTo(4 + toolSize / 2.0, 4 + toolSize / 2.0);
+		path.cubicTo(64, 4 + toolSize / 2.0, 128, 64, 128, 128);
+		path.cubicTo(128, 192, 252.0 - toolSize / 2.0, 192, 252.0 - toolSize / 2.0, 252.0 - toolSize / 2.0);
 		painter.drawPath(path);
 	} else if (tool == TOOL_BRUSH) {
 		auto painter = QPainter(&pixmap);
 		QPainterPath path;
-		path.moveTo(toolSize, toolSize);
-		path.cubicTo(64, toolSize, 128, 64, 128, 128);
-		path.cubicTo(128, 192, 256.0 - toolSize, 192, 256.0 - toolSize, 256.0 - toolSize);
+		path.moveTo(4 + toolSize / 2.0, 4 + toolSize / 2.0);
+		path.cubicTo(64, 4 + toolSize / 2.0, 128, 64, 128, 128);
+		path.cubicTo(128, 192, 252.0 - toolSize / 2.0, 192, 252.0 - toolSize / 2.0, 252.0 - toolSize / 2.0);
 		for (auto step = toolSize; step > 0.0; step -= 1.0) {
 			auto c = toolColor;
 			c.setAlphaF(toolColor.alphaF() / toolSize);
@@ -1482,4 +1564,16 @@ QIcon DrawDock::CreateToolIcon(obs_data_t *settings)
 	}
 
 	return QIcon(pixmap);
+}
+
+QIcon DrawDock::CreateToolIcon(obs_data_t *ts)
+{
+
+	obs_data_t *settings = obs_data_get_obj(ts, "settings");
+	auto toolColor = color_from_int(obs_data_get_int(settings, "tool_color"));
+	auto tool = (uint32_t)obs_data_get_int(settings, "tool");
+	auto alpha = obs_data_get_double(settings, "tool_alpha");
+	auto toolSize = obs_data_get_double(settings, "tool_size") * 2.0;
+	obs_data_release(settings);
+	return CreateToolIcon(toolColor, tool, alpha, toolSize);
 }

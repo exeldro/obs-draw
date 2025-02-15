@@ -41,6 +41,7 @@ private:
 	QCheckBox *eraseCheckbox;
 
 	obs_data_t *config;
+	std::map<obs_hotkey_id, std::pair<QAction *, obs_data_t *>> favoriteToolHotkeys;
 
 	float zoom = 1.0f;
 	float scrollX = 0.5f;
@@ -67,12 +68,14 @@ private:
 	QAction *AddFavoriteTool(obs_data_t *settings = nullptr);
 	void ApplyFavoriteTool(obs_data_t *settings = nullptr);
 	QIcon CreateToolIcon(obs_data_t *settings);
+	QIcon CreateToolIcon(QColor toolColor, uint32_t tool, double alpha = 100.0, double toolSize = 20.0);
 
 	static void DrawPreview(void *data, uint32_t cx, uint32_t cy);
 	static void frontend_event(enum obs_frontend_event event, void *data);
 	static void draw_source_update(void *data, calldata_t *cd);
 	static void draw_source_destroy(void *data, calldata_t *cd);
 	static void source_create(void *data, calldata_t *cd);
+	static void favorite_tool_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
 
 private slots:
 	void DrawSourceUpdate();
