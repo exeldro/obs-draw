@@ -115,13 +115,20 @@ float4 draw_dot_line(float2 coord, float2 from, float2 to, float4 orig)
 				{
 					effective_alpha = max(1.0, effective_alpha);
 
-					if (d > dp && (md - d) % (tool_size * 8.0) >= tool_size * 4.0)
+					float v = md - d;
+					float v2 = v - (tool_size * 8.0) * floor(v / (tool_size * 8.0));
+					if (d > dp && v2 >= tool_size * 4.0)
 					{
 						color = float3(0, 0, 0);
 					}
-					else if (d < dp && (md - dp) % (tool_size * 8.0) >= tool_size * 4.0)
+					else
 					{
-						color = float3(0, 0, 0);
+						v = md - dp;
+						v2 = v - (tool_size * 8.0) * floor(v / (tool_size * 8.0));
+						if (d < dp && v2 >= tool_size * 4.0)
+						{
+							color = float3(0, 0, 0);
+						}
 					}
 				}
 			}
@@ -172,7 +179,9 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 				if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
 				{
 					float r = atan2(coord.y - center.y, coord.x - center.x) + 3.14;
-					if ((r * 50 / 3.14) % 2 >= 1.0)
+					float v = r * 50.0 / 3.14;
+					float v2 = v - 2.0 * floor(v / 2.0);
+					if (v2 >= 1.0)
 					{
 						return apply_color(float4(0, 0, 0, 1), orig);
 					}
@@ -377,7 +386,9 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 		if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
 		{
 			float r = atan2(coord.y - center.y, coord.x - center.x) + 3.14;
-			if ((r * 50 / 3.14) % 2 >= 1.0)
+			float v = r * 50.0 / 3.14;
+			float v2 = v - 2.0 * floor(v / 2.0);
+			if (v2 >= 1.0)
 			{
 				return apply_color(float4(0, 0, 0, 1), orig);
 			}
