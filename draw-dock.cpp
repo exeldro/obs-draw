@@ -1,6 +1,7 @@
 #include "draw-dock.hpp"
 #include "draw-source.h"
 #include "name-dialog.hpp"
+#include "obs-websocket-api.h"
 #include "version.h"
 #include <graphics/matrix4.h>
 #include <obs-module.h>
@@ -15,6 +16,9 @@
 #include <QVBoxLayout>
 #include <QWidgetAction>
 #include <util/platform.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 OBS_DECLARE_MODULE()
 OBS_MODULE_AUTHOR("Exeldro");
@@ -43,7 +47,6 @@ bool obs_module_load()
 	dock->hide();
 	obs_frontend_add_dock(dock);
 #endif
-
 	obs_frontend_pop_ui_translation();
 
 	return true;
@@ -51,7 +54,8 @@ bool obs_module_load()
 
 void obs_module_post_load(void)
 {
-	//draw_dock->RegisterObsWebsocket();
+	if (draw_dock)
+		draw_dock->PostLoad();
 }
 
 void obs_module_unload() {}
@@ -65,6 +69,86 @@ MODULE_EXPORT const char *obs_module_name(void)
 {
 	return obs_module_text("DrawDock");
 }
+
+#ifdef _WIN32
+#if QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
+#define GENERIC_MONITOR_NAME QStringLiteral("Generic PnP Monitor")
+
+struct MonitorData {
+	const wchar_t *id;
+	MONITORINFOEX info;
+	bool found;
+};
+
+static BOOL CALLBACK GetMonitorCallback(HMONITOR monitor, HDC, LPRECT, LPARAM param)
+{
+	MonitorData *data = (MonitorData *)param;
+
+	if (GetMonitorInfoW(monitor, &data->info)) {
+		if (wcscmp(data->info.szDevice, data->id) == 0) {
+			data->found = true;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+QString GetMonitorName(const QString &id)
+{
+	MonitorData data = {};
+	data.id = (const wchar_t *)id.utf16();
+	data.info.cbSize = sizeof(data.info);
+
+	EnumDisplayMonitors(nullptr, nullptr, GetMonitorCallback, (LPARAM)&data);
+	if (!data.found) {
+		return GENERIC_MONITOR_NAME;
+	}
+
+	UINT32 numPath, numMode;
+	if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &numPath, &numMode) != ERROR_SUCCESS) {
+		return GENERIC_MONITOR_NAME;
+	}
+
+	std::vector<DISPLAYCONFIG_PATH_INFO> paths(numPath);
+	std::vector<DISPLAYCONFIG_MODE_INFO> modes(numMode);
+
+	if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &numPath, paths.data(), &numMode, modes.data(), nullptr) != ERROR_SUCCESS) {
+		return GENERIC_MONITOR_NAME;
+	}
+
+	DISPLAYCONFIG_TARGET_DEVICE_NAME target;
+	bool found = false;
+
+	paths.resize(numPath);
+	for (size_t i = 0; i < numPath; ++i) {
+		const DISPLAYCONFIG_PATH_INFO &path = paths[i];
+
+		DISPLAYCONFIG_SOURCE_DEVICE_NAME s;
+		s.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+		s.header.size = sizeof(s);
+		s.header.adapterId = path.sourceInfo.adapterId;
+		s.header.id = path.sourceInfo.id;
+
+		if (DisplayConfigGetDeviceInfo(&s.header) == ERROR_SUCCESS &&
+		    wcscmp(data.info.szDevice, s.viewGdiDeviceName) == 0) {
+			target.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+			target.header.size = sizeof(target);
+			target.header.adapterId = path.sourceInfo.adapterId;
+			target.header.id = path.targetInfo.id;
+			found = DisplayConfigGetDeviceInfo(&target.header) == ERROR_SUCCESS;
+			break;
+		}
+	}
+
+	if (!found) {
+		return GENERIC_MONITOR_NAME;
+	}
+
+	return QString::fromWCharArray(target.monitorFriendlyDeviceName);
+}
+#endif
+#endif
 
 static inline QColor color_from_int(long long val)
 {
@@ -346,10 +430,56 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 		});
 
 		obs_data_release(settings);
+
+		menu.addSeparator();
+		auto fullMenu = menu.addMenu(QString::fromUtf8(obs_module_text("Fullscreen")));
+		QList<QScreen *> screens = QGuiApplication::screens();
+		for (int i = 0; i < screens.size(); i++) {
+			QScreen *screen = screens[i];
+			QRect screenGeometry = screen->geometry();
+			qreal ratio = screen->devicePixelRatio();
+			QString name = "";
+#if defined(_WIN32) && QT_VERSION < QT_VERSION_CHECK(6, 4, 0)
+			QTextStream fullname(&name);
+			fullname << GetMonitorName(screen->name());
+			fullname << " (";
+			fullname << (i + 1);
+			fullname << ")";
+#elif defined(__APPLE__) || defined(_WIN32)
+			name = screen->name();
+#else
+			name = screen->model().simplified();
+
+			if (name.length() > 1 && name.endsWith("-"))
+				name.chop(1);
+#endif
+			name = name.simplified();
+
+			if (name.length() == 0) {
+				name = QString("%1 %2")
+					       .arg(QString::fromUtf8(obs_frontend_get_locale_string("Display")))
+					       .arg(QString::number(i + 1));
+			}
+			QString str = QString("%1: %2x%3 @ %4,%5")
+					      .arg(name, QString::number(screenGeometry.width() * ratio),
+						   QString::number(screenGeometry.height() * ratio),
+						   QString::number(screenGeometry.x()), QString::number(screenGeometry.y()));
+
+			QAction *a = fullMenu->addAction(str, this, SLOT(OpenFullScreenProjector()));
+			a->setProperty("monitor", i);
+		}
+
 		menu.exec(QCursor::pos());
 	});
 	toolbar->widgetForAction(a)->setProperty("themeID", "propertiesIconSmall");
 	toolbar->widgetForAction(a)->setProperty("class", "icon-gear");
+
+	auto hotkeyId = obs_hotkey_register_frontend("draw_clear", obs_module_text("DrawClear"), clear_hotkey, this);
+	auto hotkeys = obs_data_get_array(config, "clear_hotkey");
+	if (hotkeys) {
+		obs_hotkey_load(hotkeyId, hotkeys);
+		obs_data_array_release(hotkeys);
+	}
 
 	obs_data_array_t *tools = obs_data_get_array(config, "tools");
 	auto count = obs_data_array_count(tools);
@@ -377,6 +507,11 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			   QVariant(TOOL_ELLIPSE_OUTLINE));
 	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_ELLIPSE_FILL), obs_module_text("EllipseFill"),
 			   QVariant(TOOL_ELLIPSE_FILL));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_SELECT_RECTANGLE), obs_module_text("SelectRectangle"),
+			   QVariant(TOOL_SELECT_RECTANGLE));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_SELECT_ELLIPSE), obs_module_text("SelectEllipse"),
+			   QVariant(TOOL_SELECT_ELLIPSE));
+
 	connect(toolCombo, &QComboBox::currentIndexChanged, [this] {
 		if (!draw_source)
 			return;
@@ -548,40 +683,14 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 	};
 
 	connect(alphaSpin, &QDoubleSpinBox::valueChanged, alphaChange);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+	connect(eraseCheckbox, &QCheckBox::checkStateChanged, alphaChange);
+#else
 	connect(eraseCheckbox, &QCheckBox::stateChanged, alphaChange);
+#endif
 
 	toolbar->addSeparator();
-	toolbar->addAction(QString::fromUtf8(obs_module_text("Clear")), [this] {
-		if (draw_source) {
-			proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
-			if (!ph)
-				return;
-			calldata_t d = {};
-			proc_handler_call(ph, "clear", &d);
-		}
-		obs_source_t *scene_source = obs_frontend_get_current_scene();
-		if (!scene_source)
-			return;
-		obs_scene_t *scene = obs_scene_from_source(scene_source);
-		obs_source_release(scene_source);
-		if (!scene)
-			return;
-
-		obs_scene_enum_items(
-			scene,
-			[](obs_scene_t *, obs_sceneitem_t *item, void *) {
-				auto source = obs_sceneitem_get_source(item);
-				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
-					return true;
-				proc_handler_t *ph = obs_source_get_proc_handler(source);
-				if (!ph)
-					return true;
-				calldata_t cd = {};
-				proc_handler_call(ph, "clear", &cd);
-				return true;
-			},
-			nullptr);
-	});
+	toolbar->addAction(QString::fromUtf8(obs_module_text("Clear")), [this] { ClearDraw(); });
 
 	preview->setObjectName(QStringLiteral("preview"));
 	preview->setMinimumSize(QSize(24, 24));
@@ -601,11 +710,18 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 
 	ml->addWidget(preview);
 
+	QAction *action = new QAction(this);
+	action->setShortcut(Qt::Key_Escape);
+	addAction(action);
+	connect(action, SIGNAL(triggered()), this, SLOT(EscapeTriggered()));
+
 	obs_frontend_add_event_callback(frontend_event, this);
 }
 
 DrawDock::~DrawDock()
 {
+	if (clearHotkey != OBS_INVALID_HOTKEY_ID)
+		obs_hotkey_unregister(clearHotkey);
 	for (auto i = favoriteToolHotkeys.begin(); i != favoriteToolHotkeys.end(); i++) {
 		obs_hotkey_unregister(i->first);
 	}
@@ -1133,7 +1249,10 @@ OBSEventFilter *DrawDock::BuildEventFilter()
 void DrawDock::frontend_event(enum obs_frontend_event event, void *data)
 {
 	DrawDock *window = static_cast<DrawDock *>(data);
-	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
+	if (event == OBS_FRONTEND_EVENT_FINISHED_LOADING) {
+		window->FinishedLoad();
+		window->CreateDrawSource();
+	} else if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED) {
 		window->CreateDrawSource();
 	} else if (event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CLEANUP || event == OBS_FRONTEND_EVENT_EXIT ||
 		   event == OBS_FRONTEND_EVENT_SCRIPTING_SHUTDOWN || event == OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGING) {
@@ -1286,6 +1405,10 @@ void DrawDock::SaveConfig()
 	if (!path)
 		return;
 	ensure_directory(path);
+
+	obs_data_array_t *clearHotkeyData = obs_hotkey_save(clearHotkey);
+	obs_data_set_array(config, "clear_hotkey", clearHotkeyData);
+	obs_data_array_release(clearHotkeyData);
 
 	obs_data_array_t *tools = obs_data_get_array(config, "tools");
 	size_t count = obs_data_array_count(tools);
@@ -1469,6 +1592,17 @@ QAction *DrawDock::AddFavoriteTool(obs_data_t *tool)
 	return action;
 }
 
+void DrawDock::clear_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
+{
+	UNUSED_PARAMETER(hotkey);
+	UNUSED_PARAMETER(id);
+	if (!pressed)
+		return;
+
+	DrawDock *window = static_cast<DrawDock *>(data);
+	window->ClearDraw();
+}
+
 void DrawDock::favorite_tool_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	UNUSED_PARAMETER(hotkey);
@@ -1561,6 +1695,14 @@ QIcon DrawDock::CreateToolIcon(QColor toolColor, uint32_t tool, double alpha, do
 		auto painter = QPainter(&pixmap);
 		painter.setPen(QPen(toolColor, 120));
 		painter.drawEllipse(QRect(68, 68, 120, 120));
+	} else if (tool == TOOL_SELECT_RECTANGLE) {
+		auto painter = QPainter(&pixmap);
+		painter.setPen(QPen(toolColor, toolSize, Qt::DotLine));
+		painter.drawRect(QRect(toolSize / 2.0, toolSize / 2.0, 256.0 - toolSize, 256.0 - toolSize));
+	} else if (tool == TOOL_SELECT_ELLIPSE) {
+		auto painter = QPainter(&pixmap);
+		painter.setPen(QPen(toolColor, toolSize, Qt::DotLine));
+		painter.drawEllipse(QRect(toolSize / 2.0, toolSize / 2.0, 256.0 - toolSize, 256.0 - toolSize));
 	}
 
 	return QIcon(pixmap);
@@ -1576,4 +1718,185 @@ QIcon DrawDock::CreateToolIcon(obs_data_t *ts)
 	auto toolSize = obs_data_get_double(settings, "tool_size") * 2.0;
 	obs_data_release(settings);
 	return CreateToolIcon(toolColor, tool, alpha, toolSize);
+}
+
+void DrawDock::PostLoad()
+{
+	vendor = obs_websocket_register_vendor("draw");
+	if (!vendor)
+		return;
+	obs_websocket_vendor_register_request(vendor, "version", vendor_request_version, nullptr);
+	obs_websocket_vendor_register_request(vendor, "clear", vendor_request_clear, nullptr);
+	obs_websocket_vendor_register_request(vendor, "draw", vendor_request_draw, nullptr);
+}
+
+void DrawDock::FinishedLoad()
+{
+	if (!obs_data_get_bool(config, "fullscreen"))
+		return;
+
+	auto dock = (QDockWidget *)parent();
+	dock->setFloating(true);
+	dock->setParent(nullptr);
+	dock->setGeometry(QRect(obs_data_get_int(config, "fullscreen_left"), obs_data_get_int(config, "fullscreen_top"),
+				obs_data_get_int(config, "fullscreen_width"), obs_data_get_int(config, "fullscreen_height")));
+	dock->showFullScreen();
+}
+
+void DrawDock::vendor_request_version(obs_data_t *request_data, obs_data_t *response_data, void *)
+{
+	UNUSED_PARAMETER(request_data);
+	obs_data_set_string(response_data, "version", PROJECT_VERSION);
+	obs_data_set_bool(response_data, "success", true);
+}
+
+void DrawDock::vendor_request_clear(obs_data_t *request_data, obs_data_t *response_data, void *)
+{
+	auto source_name = obs_data_get_string(request_data, "source");
+	obs_source_t *source = nullptr;
+	if (!source_name || !strlen(source_name)) {
+		if (draw_dock && draw_dock->draw_source) {
+			source = obs_source_get_ref(draw_dock->draw_source);
+		}
+	} else {
+		source = obs_get_source_by_name(source_name);
+	}
+	if (!source) {
+		obs_data_set_string(response_data, "error", "'source' not found");
+		obs_data_set_bool(response_data, "success", false);
+		return;
+	}
+	if (strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0) {
+		obs_source_release(source);
+		obs_data_set_string(response_data, "error", "'source' not a draw source");
+		obs_data_set_bool(response_data, "success", false);
+		return;
+	}
+
+	proc_handler_t *ph = obs_source_get_proc_handler(source);
+	obs_source_release(source);
+	if (!ph) {
+		obs_data_set_bool(response_data, "success", false);
+		return;
+	}
+	calldata_t d = {};
+	obs_data_set_bool(response_data, "success", proc_handler_call(ph, "clear", &d));
+}
+
+void DrawDock::vendor_request_draw(obs_data_t *request_data, obs_data_t *response_data, void *)
+{
+	auto source_name = obs_data_get_string(request_data, "source");
+	obs_source_t *source = nullptr;
+	if (!source_name || !strlen(source_name)) {
+		if (draw_dock && draw_dock->draw_source) {
+			source = obs_source_get_ref(draw_dock->draw_source);
+		}
+	} else {
+		source = obs_get_source_by_name(source_name);
+	}
+	if (!source) {
+		obs_data_set_string(response_data, "error", "'source' not found");
+		obs_data_set_bool(response_data, "success", false);
+		return;
+	}
+	if (strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0) {
+		obs_source_release(source);
+		obs_data_set_string(response_data, "error", "'source' not a draw source");
+		obs_data_set_bool(response_data, "success", false);
+		return;
+	}
+
+	proc_handler_t *ph = obs_source_get_proc_handler(source);
+	obs_source_release(source);
+	if (!ph) {
+		obs_data_set_bool(response_data, "success", false);
+		return;
+	}
+	calldata_t d = {};
+	calldata_init(&d);
+	calldata_set_ptr(&d, "data", request_data);
+	obs_data_set_bool(response_data, "success", proc_handler_call(ph, "draw", &d));
+	calldata_free(&d);
+}
+
+void DrawDock::ClearDraw()
+{
+	if (draw_source) {
+		proc_handler_t *ph = obs_source_get_proc_handler(draw_source);
+		if (!ph)
+			return;
+		calldata_t d = {};
+		proc_handler_call(ph, "clear", &d);
+	}
+	obs_source_t *scene_source = obs_frontend_get_current_scene();
+	if (!scene_source)
+		return;
+	obs_scene_t *scene = obs_scene_from_source(scene_source);
+	obs_source_release(scene_source);
+	if (!scene)
+		return;
+
+	obs_scene_enum_items(
+		scene,
+		[](obs_scene_t *, obs_sceneitem_t *item, void *) {
+			auto source = obs_sceneitem_get_source(item);
+			if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+				return true;
+			proc_handler_t *ph = obs_source_get_proc_handler(source);
+			if (!ph)
+				return true;
+			calldata_t cd = {};
+			proc_handler_call(ph, "clear", &cd);
+			return true;
+		},
+		nullptr);
+}
+
+void DrawDock::OpenFullScreenProjector()
+{
+	int monitor = sender()->property("monitor").toInt();
+	auto screen = QGuiApplication::screens()[monitor];
+	auto dock = (QDockWidget *)parent();
+	if (!dock->isFullScreen()) {
+		prevGeometry = dock->geometry();
+		prevFloating = dock->isFloating();
+		auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+		prevArea = main->dockWidgetArea(dock);
+	}
+	dock->setFloating(true);
+	auto geometry = screen->geometry();
+	dock->setGeometry(geometry);
+	dock->setParent(nullptr);
+	dock->showFullScreen();
+	if (config) {
+		obs_data_set_bool(config, "fullscreen", true);
+		obs_data_set_int(config, "fullscreen_left", geometry.left());
+		obs_data_set_int(config, "fullscreen_top", geometry.top());
+		obs_data_set_int(config, "fullscreen_width", geometry.width());
+		obs_data_set_int(config, "fullscreen_height", geometry.height());
+	}
+}
+
+void DrawDock::EscapeTriggered()
+{
+	auto dock = (QDockWidget *)parent();
+	if (!dock->isFullScreen())
+		return;
+
+	if (config)
+		obs_data_set_bool(config, "fullscreen", false);
+	auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+	dock->setParent(main);
+	dock->showNormal();
+	if (!prevGeometry.isNull()) {
+		if (dock->isFloating() != prevFloating)
+			dock->setFloating(prevFloating);
+		dock->setGeometry(prevGeometry);
+		if (!prevFloating)
+			main->addDockWidget(prevArea, dock);
+	} else {
+		if (!dock->isFloating())
+			dock->setFloating(true);
+		dock->resize(480, 270);
+	}
 }

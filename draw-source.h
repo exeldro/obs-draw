@@ -12,6 +12,12 @@ extern "C" {
 #define TOOL_RECTANGLE_FILL 5
 #define TOOL_ELLIPSE_OUTLINE 6
 #define TOOL_ELLIPSE_FILL 7
+#define TOOL_SELECT_RECTANGLE 8
+#define TOOL_SELECT_ELLIPSE 9
+
+#define TOOL_UP 0
+#define TOOL_DOWN 1
+#define TOOL_DRAG 2
 
 extern const char *image_filter;
 

@@ -4,13 +4,15 @@ uniform float2 uv_size;
 uniform int draw_cursor;
 uniform float2 uv_mouse;
 uniform float2 uv_mouse_previous;
+uniform float2 select_from;
+uniform float2 select_to;
 uniform float4 cursor_color;
 uniform float cursor_size;
 uniform texture2d cursor_image;
 uniform int tool;
 uniform float4 tool_color;
 uniform float tool_size;
-uniform bool tool_down;
+uniform int tool_mode;
 uniform bool shift_down;
 
 sampler_state def_sampler {
@@ -84,6 +86,50 @@ float4 draw_line(float2 coord, float2 from, float2 to, float4 color, float dista
 	return apply_color(float4(color.rgb, effective_alpha), orig);
 }
 
+float4 draw_dot_line(float2 coord, float2 from, float2 to, float4 orig)
+{
+	float d = distance(coord, to);
+	float effective_alpha = 0.0;
+	float3 color = float3(1, 1, 1);
+	if (d <= tool_size)
+	{
+		effective_alpha = 1.0;
+	}
+	else if (from.x >= 0.0 && from.y >= 0.0)
+	{
+		float2 lineDir = from - to;
+		float2 perpDir = float2(lineDir.y, -lineDir.x);
+		float2 dirToPt1 = to - coord;
+		float ld = abs(dot(normalize(perpDir), dirToPt1));
+		if (ld <= tool_size)
+		{
+			float dp = distance(coord, from);
+			if (dp <= tool_size)
+			{
+				effective_alpha = max(1.0, effective_alpha);
+			}
+			else
+			{
+				float md = distance(from, to);
+				if (dp < md && d < md)
+				{
+					effective_alpha = max(1.0, effective_alpha);
+
+					if (d > dp && (md - d) % (tool_size * 8.0) >= tool_size * 4.0)
+					{
+						color = float3(0, 0, 0);
+					}
+					else if (d < dp && (md - dp) % (tool_size * 8.0) >= tool_size * 4.0)
+					{
+						color = float3(0, 0, 0);
+					}
+				}
+			}
+		}
+	}
+	return apply_color(float4(color, effective_alpha), orig);
+}
+
 float4 PSDraw(VertInOut vert_in) : TARGET
 {
 	float4 orig = image.Sample(def_sampler, vert_in.uv);
@@ -100,121 +146,249 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 		{
 			float2 cursor_pos = (coord - uv_mouse) / float2(cursor_size * 2.0, cursor_size * 2.0) + float2(0.5, 0.5);
 			float4 cc = cursor_image.Sample(def_sampler, cursor_pos);
-			if(cc.a > 0.0)
+			if (cc.a > 0.0)
 				return cc;
 		}
 	}
-	if (tool_down)
+	if (tool_mode == 0)
+	{ // tool up
+		if (select_from.x != select_to.x || select_from.y != select_to.y)
+		{
+		
+			if (tool == 8) // select rectangle
+			{
+				orig = draw_dot_line(coord, select_from, float2(select_from.x, select_to.y), orig);
+				orig = draw_dot_line(coord, float2(select_from.x, select_to.y), select_to, orig);
+				orig = draw_dot_line(coord, select_to, float2(select_to.x, select_from.y), orig);
+				orig = draw_dot_line(coord, float2(select_to.x, select_from.y), select_from, orig);
+			}
+			else if (tool == 9) // select ellipse
+			{
+				float2 center = (select_from + select_to) / 2.0;
+				float2 diff = abs(select_from - center);
+				float2 inside = diff - tool_size;
+				float2 outside = diff + tool_size;
+				float2 temp = float2(pow(coord.x - center.x, 2), pow(coord.y - center.y, 2));
+				if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
+				{
+					float r = atan2(coord.y - center.y, coord.x - center.x) + 3.14;
+					if ((r * 50 / 3.14) % 2 >= 1.0)
+					{
+						return apply_color(float4(0, 0, 0, 1), orig);
+					}
+					else
+					{
+						return apply_color(float4(1, 1, 1, 1), orig);
+					}
+				
+				}
+			}
+		}
+		return orig;
+	}
+
+	if (tool_mode == 2)
+	{ // tool drag
+		if (select_from.x != select_to.x || select_from.y != select_to.y)
+		{
+		
+			if (tool == 8) // select rectangle
+			{
+				if (coord.x >= min(select_from.x, select_to.x) && coord.x <= max(select_from.x, select_to.x) && coord.y >= min(select_from.y, select_to.y) && coord.y <= max(select_from.y, select_to.y))
+				{
+					orig = float4(0, 0, 0, 0);
+				}
+				float2 diff = uv_mouse - uv_mouse_previous;
+				if (coord.x >= min(select_from.x, select_to.x) + diff.x && coord.x <= max(select_from.x, select_to.x) + diff.x && coord.y >= min(select_from.y, select_to.y) + diff.y && coord.y <= max(select_from.y, select_to.y) + diff.y)
+				{
+					orig = apply_color(image.Sample(def_sampler, (coord - diff) / uv_size), orig);
+				}
+			}
+			else if (tool == 9) // select ellipse
+			{
+				float2 center = (select_from + select_to) / 2.0;
+				float2 diff = float2(pow(select_from.x - center.x, 2.0), pow(select_from.y - center.y, 2.0));
+				float p = (pow(coord.x - center.x, 2) / diff.x) + (pow(coord.y - center.y, 2) / diff.y);
+				if (p <= 1.0)
+				{
+					orig = float4(0, 0, 0, 0);
+				}
+				float2 diff2 = uv_mouse - uv_mouse_previous;
+				p = (pow(coord.x - diff2.x - center.x, 2) / diff.x) + (pow(coord.y - diff2.y - center.y, 2) / diff.y);
+				if (p <= 1.0)
+				{
+					orig = apply_color(image.Sample(def_sampler, (coord - diff2) / uv_size), orig);
+				}
+			}
+
+		}
+		return orig;
+	}
+	
+	if (tool == 1) // pencil
 	{
-		if (tool == 1) // pencil
+		return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 0.0, orig);
+	}
+	else if (tool == 2) // brush
+	{
+		return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 1.0, orig);
+	}
+	else if (tool == 3)//line
+	{
+		if (shift_down)
 		{
-			return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 0.0, orig);
-		}
-		else if (tool == 2) // brush
-		{
-			return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 1.0, orig);
-		}
-		else if (tool == 3)//line
-		{
-			if (shift_down)
+			if (abs(uv_mouse_previous.x - uv_mouse.x) < abs(uv_mouse_previous.y - uv_mouse.y))
 			{
-				if (abs(uv_mouse_previous.x - uv_mouse.x) < abs(uv_mouse_previous.y - uv_mouse.y))
-				{
-					return draw_line(coord, uv_mouse_previous, float2(uv_mouse_previous.x, uv_mouse.y), tool_color, 0.0, orig);
-				}
-				else
-				{
-					return draw_line(coord, uv_mouse_previous, float2(uv_mouse.x, uv_mouse_previous.y), tool_color, 0.0, orig);
-				}
+				return draw_line(coord, uv_mouse_previous, float2(uv_mouse_previous.x, uv_mouse.y), tool_color, 0.0, orig);
 			}
-			return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 0.0, orig);
-		}
-		else if (tool == 4) // rectangle outline
-		{
-			float2 from = uv_mouse_previous;
-			float2 to = uv_mouse;
-			if (shift_down)
+			else
 			{
-				if (abs(from.x - to.x) > abs(from.y - to.y))
-				{
-					to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
-				}
-				else
-				{
-					to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
-				}
+				return draw_line(coord, uv_mouse_previous, float2(uv_mouse.x, uv_mouse_previous.y), tool_color, 0.0, orig);
 			}
-			orig = draw_line(coord, from, float2(from.x, to.y), tool_color, 0.0, orig);
-			orig = draw_line(coord, float2(from.x, to.y), to, tool_color, 0.0, orig);
-			orig = draw_line(coord, to, float2(to.x, from.y), tool_color, 0.0, orig);
-			orig = draw_line(coord, float2(to.x, from.y), from, tool_color, 0.0, orig);
-			return orig;
 		}
-		else if (tool == 5) // rectangle
+		return draw_line(coord, uv_mouse_previous, uv_mouse, tool_color, 0.0, orig);
+	}
+	else if (tool == 4) // rectangle outline
+	{
+		float2 from = uv_mouse_previous;
+		float2 to = uv_mouse;
+		if (shift_down)
 		{
-			float2 from = uv_mouse_previous;
-			float2 to = uv_mouse;
-			if (shift_down)
+			if (abs(from.x - to.x) > abs(from.y - to.y))
 			{
-				if (abs(from.x - to.x) > abs(from.y - to.y))
-				{
-					to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
-				}
-				else
-				{
-					to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
-				}
+				to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
 			}
-			float2 min_mouse = min(to, from);
-			float2 max_mouse = max(to, from);
-			if (coord.x >= min_mouse.x && coord.x <= max_mouse.x && coord.y >= min_mouse.y && coord.y <= max_mouse.y)
-				return apply_color(tool_color, orig);
+			else
+			{
+				to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
+			}
 		}
-		else if (tool == 6) // ellipse outline
+		orig = draw_line(coord, from, float2(from.x, to.y), tool_color, 0.0, orig);
+		orig = draw_line(coord, float2(from.x, to.y), to, tool_color, 0.0, orig);
+		orig = draw_line(coord, to, float2(to.x, from.y), tool_color, 0.0, orig);
+		orig = draw_line(coord, float2(to.x, from.y), from, tool_color, 0.0, orig);
+		return orig;
+	}
+	else if (tool == 5) // rectangle
+	{
+		float2 from = uv_mouse_previous;
+		float2 to = uv_mouse;
+		if (shift_down)
 		{
-			float2 from = uv_mouse_previous;
-			float2 to = uv_mouse;
-			if (shift_down)
+			if (abs(from.x - to.x) > abs(from.y - to.y))
 			{
-				if (abs(from.x - to.x) > abs(from.y - to.y))
-				{
-					to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
-				}
-				else
-				{
-					to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
-				}
+				to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
 			}
-			float2 center = (from + to) / 2.0;
-			float2 diff = abs(from - center);
-			float2 inside = diff - tool_size;
-			float2 outside = diff + tool_size;
-			float2 temp = float2(pow(coord.x - center.x, 2), pow(coord.y - center.y, 2));
-			if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
-				return apply_color(tool_color, orig);
+			else
+			{
+				to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
+			}
 		}
-		else if (tool == 7) // ellipse
+		float2 min_mouse = min(to, from);
+		float2 max_mouse = max(to, from);
+		if (coord.x >= min_mouse.x && coord.x <= max_mouse.x && coord.y >= min_mouse.y && coord.y <= max_mouse.y)
+			return apply_color(tool_color, orig);
+	}
+	else if (tool == 6) // ellipse outline
+	{
+		float2 from = uv_mouse_previous;
+		float2 to = uv_mouse;
+		if (shift_down)
 		{
-			float2 from = uv_mouse_previous;
-			float2 to = uv_mouse;
-			if (shift_down)
+			if (abs(from.x - to.x) > abs(from.y - to.y))
 			{
-				if (abs(from.x - to.x) > abs(from.y - to.y))
-				{
-					to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
-				}
-				else
-				{
-					to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
-				}
+				to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
 			}
-			float2 center = (from + to) / 2.0;
-			float2 diff = float2(pow(from.x - center.x, 2.0), pow(from.y - center.y, 2.0));
-			float p = (pow(coord.x - center.x, 2) / diff.x) + (pow(coord.y - center.y, 2) / diff.y);
-			if (p <= 1.0)
-				return apply_color(tool_color, orig);
+			else
+			{
+				to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
+			}
+		}
+		float2 center = (from + to) / 2.0;
+		float2 diff = abs(from - center);
+		float2 inside = diff - tool_size;
+		float2 outside = diff + tool_size;
+		float2 temp = float2(pow(coord.x - center.x, 2), pow(coord.y - center.y, 2));
+		if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
+			return apply_color(tool_color, orig);
+	}
+	else if (tool == 7) // ellipse
+	{
+		float2 from = uv_mouse_previous;
+		float2 to = uv_mouse;
+		if (shift_down)
+		{
+			if (abs(from.x - to.x) > abs(from.y - to.y))
+			{
+				to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
+			}
+			else
+			{
+				to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
+			}
+		}
+		float2 center = (from + to) / 2.0;
+		float2 diff = float2(pow(from.x - center.x, 2.0), pow(from.y - center.y, 2.0));
+		float p = (pow(coord.x - center.x, 2) / diff.x) + (pow(coord.y - center.y, 2) / diff.y);
+		if (p <= 1.0)
+			return apply_color(tool_color, orig);
+	}
+	else if (tool == 8) // select rectangle
+	{
+		float2 from = uv_mouse_previous;
+		float2 to = uv_mouse;
+		if (shift_down)
+		{
+			if (abs(from.x - to.x) > abs(from.y - to.y))
+			{
+				to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
+			}
+			else
+			{
+				to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
+			}
+		}
+		orig = draw_dot_line(coord, from, float2(from.x, to.y), orig);
+		orig = draw_dot_line(coord, float2(from.x, to.y), to, orig);
+		orig = draw_dot_line(coord, to, float2(to.x, from.y), orig);
+		orig = draw_dot_line(coord, float2(to.x, from.y), from, orig);
+		return orig;
+	}
+	else if (tool == 9) // select ellipse
+	{
+		float2 from = uv_mouse_previous;
+		float2 to = uv_mouse;
+		if (shift_down)
+		{
+			if (abs(from.x - to.x) > abs(from.y - to.y))
+			{
+				to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
+			}
+			else
+			{
+				to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
+			}
+		}
+		float2 center = (from + to) / 2.0;
+		float2 diff = abs(from - center);
+		float2 inside = diff - tool_size;
+		float2 outside = diff + tool_size;
+		float2 temp = float2(pow(coord.x - center.x, 2), pow(coord.y - center.y, 2));
+		if ((temp.x / pow(inside.x, 2.0)) + (temp.y / pow(inside.y, 2.0)) >= 1.0 && (temp.x / pow(outside.x, 2.0)) + (temp.y / pow(outside.y, 2.0)) <= 1.0)
+		{
+			float r = atan2(coord.y - center.y, coord.x - center.x) + 3.14;
+			if ((r * 50 / 3.14) % 2 >= 1.0)
+			{
+				return apply_color(float4(0, 0, 0, 1), orig);
+			}
+			else
+			{
+				return apply_color(float4(1, 1, 1, 1), orig);
+			}
+				
 		}
 	}
+	
 	return orig;
 }
 

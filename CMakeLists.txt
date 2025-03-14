@@ -6,7 +6,7 @@ else()
   cmake_minimum_required(VERSION 3.18)
 endif()
 
-project(draw-dock VERSION 0.1.0)
+project(draw-dock VERSION 0.2.0)
 set(PROJECT_FULL_NAME "Draw Dock")
 
 # Set new UUIDs when you start to create a new plugin.

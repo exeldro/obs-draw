@@ -37,11 +37,14 @@ struct draw_source {
 
 	bool show_mouse;
 	bool mouse_active;
-	bool tool_down;
+	uint32_t tool_mode;
 	bool shift_down;
 
 	struct vec2 mouse_pos;
 	struct vec2 mouse_previous_pos;
+
+	struct vec2 select_from;
+	struct vec2 select_to;
 
 	gs_effect_t *draw_effect;
 	gs_eparam_t *image_param;
@@ -55,8 +58,10 @@ struct draw_source {
 	gs_eparam_t *tool_param;
 	gs_eparam_t *tool_color_param;
 	gs_eparam_t *tool_size_param;
-	gs_eparam_t *tool_down_param;
+	gs_eparam_t *tool_mode_param;
 	gs_eparam_t *shift_down_param;
+	gs_eparam_t *select_from_param;
+	gs_eparam_t *select_to_param;
 
 	uint32_t tool;
 	struct vec4 tool_color;
@@ -80,6 +85,8 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 	gs_effect_set_vec2(ds->uv_size_param, &ds->size);
 	gs_effect_set_vec2(ds->uv_mouse_param, &ds->mouse_pos);
 	gs_effect_set_vec2(ds->uv_mouse_previous_param, &ds->mouse_previous_pos);
+	gs_effect_set_vec2(ds->select_from_param, &ds->select_from);
+	gs_effect_set_vec2(ds->select_to_param, &ds->select_to);
 	gs_effect_set_int(ds->draw_cursor_param, mouse ? (ds->cursor_image ? 2 : 1) : 0);
 	gs_effect_set_vec4(ds->cursor_color_param, &ds->cursor_color);
 	gs_effect_set_float(ds->cursor_size_param, ds->cursor_size);
@@ -87,7 +94,7 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 	gs_effect_set_int(ds->tool_param, ds->tool);
 	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
 	gs_effect_set_float(ds->tool_size_param, ds->tool_size);
-	gs_effect_set_bool(ds->tool_down_param, ds->tool_down);
+	gs_effect_set_int(ds->tool_mode_param, ds->tool_mode);
 	gs_effect_set_bool(ds->shift_down_param, ds->shift_down);
 	gs_effect_set_texture(ds->image_param, tex);
 	while (gs_effect_loop(ds->draw_effect, "Draw"))
@@ -143,6 +150,38 @@ void clear_proc_handler(void *data, calldata_t *cd)
 	UNUSED_PARAMETER(cd);
 	struct draw_source *context = data;
 	clear(context);
+}
+
+static void apply_tool(struct draw_source *ds);
+
+void draw_proc_handler(void *param, calldata_t *cd)
+{
+	struct draw_source *context = param;
+	obs_data_t *data = calldata_ptr(cd, "data");
+
+	if (obs_data_has_user_value(data, "tool"))
+		context->tool = (uint32_t)obs_data_get_int(data, "tool");
+	if (obs_data_has_user_value(data, "from_x"))
+		context->mouse_previous_pos.x = (float)obs_data_get_double(data, "from_x");
+	if (obs_data_has_user_value(data, "from_y"))
+		context->mouse_previous_pos.y = (float)obs_data_get_double(data, "from_y");
+	if (obs_data_has_user_value(data, "to_x"))
+		context->mouse_pos.x = (float)obs_data_get_double(data, "to_x");
+	if (obs_data_has_user_value(data, "to_y"))
+		context->mouse_pos.y = (float)obs_data_get_double(data, "to_y");
+	if (obs_data_has_user_value(data, "tool_color")) {
+		vec4_from_rgba(&context->tool_color, (uint32_t)obs_data_get_int(data, "tool_color"));
+		if (context->tool_color.w == 0.0f)
+			context->tool_color.w = 1.0f;
+	}
+	if (obs_data_has_user_value(data, "tool_alpha"))
+		context->tool_color.w = (float)obs_data_get_double(data, "tool_alpha") / 100.0f;
+	if (obs_data_has_user_value(data, "tool_size"))
+		context->tool_size = (float)obs_data_get_double(data, "tool_size");
+	context->tool_mode = TOOL_DOWN;
+	apply_tool(context);
+	context->tool_mode = TOOL_UP;
+	context->mouse_previous_pos = context->mouse_pos;
 }
 
 void undo(struct draw_source *ds)
@@ -218,6 +257,8 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 		context->uv_size_param = gs_effect_get_param_by_name(context->draw_effect, "uv_size");
 		context->uv_mouse_param = gs_effect_get_param_by_name(context->draw_effect, "uv_mouse");
 		context->uv_mouse_previous_param = gs_effect_get_param_by_name(context->draw_effect, "uv_mouse_previous");
+		context->select_from_param = gs_effect_get_param_by_name(context->draw_effect, "select_from");
+		context->select_to_param = gs_effect_get_param_by_name(context->draw_effect, "select_to");
 		context->draw_cursor_param = gs_effect_get_param_by_name(context->draw_effect, "draw_cursor");
 		context->cursor_color_param = gs_effect_get_param_by_name(context->draw_effect, "cursor_color");
 		context->cursor_size_param = gs_effect_get_param_by_name(context->draw_effect, "cursor_size");
@@ -225,7 +266,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 		context->tool_param = gs_effect_get_param_by_name(context->draw_effect, "tool");
 		context->tool_color_param = gs_effect_get_param_by_name(context->draw_effect, "tool_color");
 		context->tool_size_param = gs_effect_get_param_by_name(context->draw_effect, "tool_size");
-		context->tool_down_param = gs_effect_get_param_by_name(context->draw_effect, "tool_down");
+		context->tool_mode_param = gs_effect_get_param_by_name(context->draw_effect, "tool_mode");
 		context->shift_down_param = gs_effect_get_param_by_name(context->draw_effect, "shift_down");
 	}
 	obs_leave_graphics();
@@ -233,6 +274,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 
 	proc_handler_t *ph = obs_source_get_proc_handler(source);
 	proc_handler_add(ph, "void clear()", clear_proc_handler, context);
+	proc_handler_add(ph, "void draw(in ptr data)", draw_proc_handler, context);
 	proc_handler_add(ph, "void undo()", undo_proc_handler, context);
 	proc_handler_add(ph, "void redo()", redo_proc_handler, context);
 
@@ -337,6 +379,7 @@ static void apply_tool(struct draw_source *ds)
 	}
 	obs_leave_graphics();
 }
+
 static bool draw_on_mouse_move(uint32_t tool)
 {
 	return tool == TOOL_PENCIL || tool == TOOL_BRUSH;
@@ -355,7 +398,7 @@ static void ds_mouse_move(void *data, const struct obs_mouse_event *event, bool 
 	ds->mouse_active = !mouse_leave;
 	ds->shift_down = ((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
 
-	if (ds->mouse_active && ds->tool_down && draw_on_mouse_move(ds->tool)) {
+	if (ds->mouse_active && ds->tool_mode != TOOL_UP && draw_on_mouse_move(ds->tool)) {
 		apply_tool(ds);
 	}
 
@@ -380,15 +423,36 @@ void ds_mouse_click(void *data, const struct obs_mouse_event *event, int32_t typ
 		copy_to_undo(context);
 
 	if (!mouse_up && type == 0) {
-		context->tool_down = true;
+		context->tool_mode = TOOL_DOWN;
+		if (context->tool == TOOL_SELECT_RECTANGLE || context->tool == TOOL_SELECT_ELLIPSE) {
+			if (context->mouse_pos.x > fminf(context->select_from.x, context->select_to.x) &&
+			    context->mouse_pos.x < fmaxf(context->select_from.x, context->select_to.x) &&
+			    context->mouse_pos.y > fminf(context->select_from.y, context->select_to.y) &&
+			    context->mouse_pos.y < fmaxf(context->select_from.y, context->select_to.y)) {
+				context->tool_mode = TOOL_DRAG;
+			}
+		}
 		if (draw)
 			apply_tool(context);
-	} else if (context->tool_down) {
+	} else if (context->tool_mode == TOOL_DOWN) {
 		if (!draw && type == 0) {
-			copy_to_undo(context);
-			apply_tool(context);
+			if (context->tool == TOOL_SELECT_RECTANGLE || context->tool == TOOL_SELECT_ELLIPSE) {
+				context->select_from = context->mouse_previous_pos;
+				context->select_to = context->mouse_pos;
+			} else {
+				copy_to_undo(context);
+				apply_tool(context);
+			}
 		}
-		context->tool_down = false;
+		context->tool_mode = TOOL_UP;
+	} else if (context->tool_mode == TOOL_DRAG) {
+		copy_to_undo(context);
+		apply_tool(context);
+		context->select_from.x += context->mouse_pos.x - context->mouse_previous_pos.x;
+		context->select_from.y += context->mouse_pos.y - context->mouse_previous_pos.y;
+		context->select_to.x += context->mouse_pos.x - context->mouse_previous_pos.x;
+		context->select_to.y += context->mouse_pos.y - context->mouse_previous_pos.y;
+		context->tool_mode = TOOL_UP;
 	}
 	if (!draw) {
 		context->mouse_previous_pos = context->mouse_pos;
