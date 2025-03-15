@@ -2,6 +2,10 @@
 
 Plugin for OBS Studio to add a Draw dock.
 
+# Download
+
+https://obsproject.com/forum/resources/draw.2081/
+
 # Build
 - Build OBS Studio: https://obsproject.com/wiki/Install-Instructions
 - Check out this repository to UI/frontend-plugins/draw
