@@ -492,11 +492,19 @@ static void ds_update(void *data, obs_data_t *settings)
 	if (!context->render_a || !context->render_b) {
 		obs_enter_graphics();
 		context->render_a = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-		if (gs_texrender_begin(context->render_a, (uint32_t)context->size.x, (uint32_t)context->size.y))
+		if (gs_texrender_begin(context->render_a, (uint32_t)context->size.x, (uint32_t)context->size.y)) {
+			struct vec4 clear_color;
+			vec4_zero(&clear_color);
+			gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
 			gs_texrender_end(context->render_a);
+		}
 		context->render_b = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-		if (gs_texrender_begin(context->render_b, (uint32_t)context->size.x, (uint32_t)context->size.y))
+		if (gs_texrender_begin(context->render_b, (uint32_t)context->size.x, (uint32_t)context->size.y)) {
+			struct vec4 clear_color;
+			vec4_zero(&clear_color);
+			gs_clear(GS_CLEAR_COLOR, &clear_color, 0.0f, 0);
 			gs_texrender_end(context->render_b);
+		}
 		obs_leave_graphics();
 	} else {
 		//gs_texrender_reset(context->render);
