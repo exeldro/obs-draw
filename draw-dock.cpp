@@ -164,7 +164,7 @@ static inline long long color_to_int(QColor color)
 	return shift(color.red(), 0) | shift(color.green(), 8) | shift(color.blue(), 16) | shift(color.alpha(), 24);
 }
 
-DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFilter()), preview(new OBSQTDisplay(this))
+DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventFilter()), preview(new OBSQTDisplay(this))
 {
 	auto ml = new QVBoxLayout(this);
 	ml->setContentsMargins(0, 0, 0, 0);
@@ -468,6 +468,19 @@ DrawDock::DrawDock(QWidget *parent) : QWidget(parent), eventFilter(BuildEventFil
 			QAction *a = fullMenu->addAction(str, this, SLOT(OpenFullScreenProjector()));
 			a->setProperty("monitor", i);
 		}
+		menu.addAction(QString::fromUtf8(obs_module_text("ResetDock")), [this] {
+			auto dock = (QDockWidget *)parent();
+			if (dock->isFullScreen()) {
+				if (config)
+					obs_data_set_bool(config, "fullscreen", false);
+				auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+				dock->setParent(main);
+				dock->showNormal();
+			}
+			if (!dock->isFloating())
+				dock->setFloating(true);
+			dock->resize(860, 530);
+		});
 
 		menu.exec(QCursor::pos());
 	});
@@ -1897,6 +1910,6 @@ void DrawDock::EscapeTriggered()
 	} else {
 		if (!dock->isFloating())
 			dock->setFloating(true);
-		dock->resize(480, 270);
+		dock->resize(860, 530);
 	}
 }
