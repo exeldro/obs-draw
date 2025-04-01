@@ -10,6 +10,7 @@ uniform float4 cursor_color;
 uniform float cursor_size;
 uniform texture2d cursor_image;
 uniform int tool;
+uniform texture2d tool_image;
 uniform float4 tool_color;
 uniform float tool_size;
 uniform int tool_mode;
@@ -397,6 +398,37 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 				return apply_color(float4(1, 1, 1, 1), orig);
 			}
 				
+		}
+	}
+	else if (tool == 10) // stamp
+	{
+		if (coord.x >= uv_mouse.x - tool_size && coord.x <= uv_mouse.x + tool_size && coord.y >= uv_mouse.y - tool_size && coord.y <= uv_mouse.y + tool_size)
+		{
+			float2 uv = (coord - uv_mouse + float2(tool_size, tool_size)) / (tool_size * 2.0);
+			return apply_color(tool_image.Sample(def_sampler, uv), orig);
+		}
+	}
+	else if (tool == 11) // image
+	{
+		float2 from = uv_mouse_previous;
+		float2 to = uv_mouse;
+		if (shift_down)
+		{
+			if (abs(from.x - to.x) > abs(from.y - to.y))
+			{
+				to.x = from.x + (to.x - from.x) / abs(from.x - to.x) * abs(from.y - to.y);
+			}
+			else
+			{
+				to.y = from.y + (to.y - from.y) / abs(from.y - to.y) * abs(from.x - to.x);
+			}
+		}
+		float2 min_mouse = min(to, from);
+		float2 max_mouse = max(to, from);
+		if (coord.x >= min_mouse.x && coord.x <= max_mouse.x && coord.y >= min_mouse.y && coord.y <= max_mouse.y)
+		{
+			float2 uv = (coord - from) / (to - from);
+			return apply_color(tool_image.Sample(def_sampler, uv), orig);
 		}
 	}
 	

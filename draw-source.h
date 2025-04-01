@@ -14,6 +14,8 @@ extern "C" {
 #define TOOL_ELLIPSE_FILL 7
 #define TOOL_SELECT_RECTANGLE 8
 #define TOOL_SELECT_ELLIPSE 9
+#define TOOL_STAMP 10
+#define TOOL_IMAGE 11
 
 #define TOOL_UP 0
 #define TOOL_DOWN 1

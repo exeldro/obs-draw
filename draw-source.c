@@ -56,6 +56,7 @@ struct draw_source {
 	gs_eparam_t *cursor_size_param;
 	gs_eparam_t *cursor_image_param;
 	gs_eparam_t *tool_param;
+	gs_eparam_t *tool_image_param;
 	gs_eparam_t *tool_color_param;
 	gs_eparam_t *tool_size_param;
 	gs_eparam_t *tool_mode_param;
@@ -64,6 +65,8 @@ struct draw_source {
 	gs_eparam_t *select_to_param;
 
 	uint32_t tool;
+	char *tool_image_path;
+	gs_image_file4_t *tool_image;
 	struct vec4 tool_color;
 	float tool_size;
 
@@ -92,6 +95,7 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 	gs_effect_set_float(ds->cursor_size_param, ds->cursor_size);
 	gs_effect_set_texture(ds->cursor_image_param, ds->cursor_image ? ds->cursor_image->image3.image2.image.texture : NULL);
 	gs_effect_set_int(ds->tool_param, ds->tool);
+	gs_effect_set_texture(ds->tool_image_param, ds->tool_image ? ds->tool_image->image3.image2.image.texture : NULL);
 	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
 	gs_effect_set_float(ds->tool_size_param, ds->tool_size);
 	gs_effect_set_int(ds->tool_mode_param, ds->tool_mode);
@@ -264,6 +268,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 		context->cursor_size_param = gs_effect_get_param_by_name(context->draw_effect, "cursor_size");
 		context->cursor_image_param = gs_effect_get_param_by_name(context->draw_effect, "cursor_image");
 		context->tool_param = gs_effect_get_param_by_name(context->draw_effect, "tool");
+		context->tool_image_param = gs_effect_get_param_by_name(context->draw_effect, "tool_image");
 		context->tool_color_param = gs_effect_get_param_by_name(context->draw_effect, "tool_color");
 		context->tool_size_param = gs_effect_get_param_by_name(context->draw_effect, "tool_size");
 		context->tool_mode_param = gs_effect_get_param_by_name(context->draw_effect, "tool_mode");
@@ -316,6 +321,14 @@ static void ds_destroy(void *data)
 		}
 		gs_texrender_destroy(context->render_b);
 	}
+	if (context->tool_image) {
+		if (!graphics) {
+			graphics = true;
+			obs_enter_graphics();
+		}
+		gs_image_file4_free(context->tool_image);
+		bfree(context->tool_image);
+	}
 	if (context->cursor_image) {
 		if (!graphics) {
 			graphics = true;
@@ -326,6 +339,8 @@ static void ds_destroy(void *data)
 	}
 	if (graphics)
 		obs_leave_graphics();
+	if (context->tool_image_path)
+		bfree(context->tool_image_path);
 	if (context->cursor_image_path)
 		bfree(context->cursor_image_path);
 	bfree(context);
@@ -382,7 +397,7 @@ static void apply_tool(struct draw_source *ds)
 
 static bool draw_on_mouse_move(uint32_t tool)
 {
-	return tool == TOOL_PENCIL || tool == TOOL_BRUSH;
+	return tool == TOOL_PENCIL || tool == TOOL_BRUSH || tool == TOOL_STAMP;
 }
 
 static void ds_mouse_move(void *data, const struct obs_mouse_event *event, bool mouse_leave)
@@ -390,7 +405,7 @@ static void ds_mouse_move(void *data, const struct obs_mouse_event *event, bool 
 	struct draw_source *ds = data;
 	//if (context->pen_down && (context->mouse_x != event->x || context->mouse_y != event->y)) {
 	//}
-	if (draw_on_mouse_move(ds->tool)) {
+	if (!mouse_leave && draw_on_mouse_move(ds->tool)) {
 		ds->mouse_previous_pos = ds->mouse_pos;
 	}
 	ds->mouse_pos.x = (float)event->x;
@@ -541,6 +556,38 @@ static void ds_update(void *data, obs_data_t *settings)
 			context->cursor_image_path = NULL;
 		}
 	}
+
+	const char *tool_image_path = obs_data_get_string(settings, "tool_image_file");
+	if (strlen(tool_image_path) > 0) {
+		if (!context->tool_image_path || strcmp(tool_image_path, context->tool_image_path) != 0) {
+			if (context->tool_image_path)
+				bfree(context->tool_image_path);
+			context->tool_image_path = bstrdup(tool_image_path);
+			if (!context->tool_image) {
+				context->tool_image = bzalloc(sizeof(gs_image_file4_t));
+			} else {
+				obs_enter_graphics();
+				gs_image_file4_free(context->tool_image);
+				obs_leave_graphics();
+			}
+			gs_image_file4_init(context->tool_image, tool_image_path, GS_IMAGE_ALPHA_PREMULTIPLY_SRGB);
+			// : GS_IMAGE_ALPHA_PREMULTIPLY);
+
+			obs_enter_graphics();
+			gs_image_file4_init_texture(context->tool_image);
+			obs_leave_graphics();
+		}
+	} else if (context->tool_image) {
+		obs_enter_graphics();
+		gs_image_file4_free(context->tool_image);
+		obs_leave_graphics();
+		bfree(context->tool_image);
+		context->tool_image = NULL;
+		if (context->tool_image_path) {
+			bfree(context->tool_image_path);
+			context->tool_image_path = NULL;
+		}
+	}
 }
 
 static bool clear_property_button(obs_properties_t *props, obs_property_t *property, void *data)
@@ -586,6 +633,12 @@ static obs_properties_t *ds_get_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("RectangleFill"), TOOL_RECTANGLE_FILL);
 	obs_property_list_add_int(p, obs_module_text("EllipseOutline"), TOOL_ELLIPSE_OUTLINE);
 	obs_property_list_add_int(p, obs_module_text("EllipseFill"), TOOL_ELLIPSE_FILL);
+	obs_property_list_add_int(p, obs_module_text("SelectRectangle"), TOOL_SELECT_RECTANGLE);
+	obs_property_list_add_int(p, obs_module_text("SelectEllipse"), TOOL_SELECT_ELLIPSE);
+	obs_property_list_add_int(p, obs_module_text("Stamp"), TOOL_STAMP);
+	obs_property_list_add_int(p, obs_module_text("Image"), TOOL_IMAGE);
+
+	obs_properties_add_path(props, "tool_image_file", obs_module_text("ToolImageFile"), OBS_PATH_FILE, image_filter, NULL);
 
 	obs_properties_add_color(props, "tool_color", obs_module_text("ToolColor"));
 	p = obs_properties_add_float_slider(props, "tool_alpha", obs_module_text("ToolAlpha"), -100.0, 100.0, 0.1);

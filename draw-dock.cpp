@@ -213,6 +213,7 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 				obs_data_t *gdss = obs_source_get_settings(draw_source);
 				obs_data_t *settings = obs_data_get_obj(ts, "settings");
 				obs_data_set_int(settings, "tool", obs_data_get_int(gdss, "tool"));
+				obs_data_set_string(settings, "tool_image_file", obs_data_get_string(gdss, "tool_image_file"));
 				obs_data_set_int(settings, "tool_color", obs_data_get_int(gdss, "tool_color"));
 				obs_data_set_double(settings, "tool_size", obs_data_get_double(gdss, "tool_size"));
 				obs_data_set_double(settings, "tool_alpha", obs_data_get_double(gdss, "tool_alpha"));
@@ -265,6 +266,7 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			obs_data_set_string(tool, "tool_name", name.c_str());
 			obs_data_t *settings = obs_data_create();
 			obs_data_set_int(settings, "tool", obs_data_get_int(gdss, "tool"));
+			obs_data_set_string(settings, "tool_image_file", obs_data_get_string(gdss, "tool_image_file"));
 			obs_data_set_int(settings, "tool_color", obs_data_get_int(gdss, "tool_color"));
 			obs_data_set_double(settings, "tool_size", obs_data_get_double(gdss, "tool_size"));
 			obs_data_set_double(settings, "tool_alpha", obs_data_get_double(gdss, "tool_alpha"));
@@ -524,11 +526,20 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			   QVariant(TOOL_SELECT_RECTANGLE));
 	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_SELECT_ELLIPSE), obs_module_text("SelectEllipse"),
 			   QVariant(TOOL_SELECT_ELLIPSE));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_STAMP), obs_module_text("Stamp"), QVariant(TOOL_STAMP));
+	toolCombo->addItem(CreateToolIcon(demoColor, TOOL_IMAGE), obs_module_text("Image"), QVariant(TOOL_IMAGE));
 
 	connect(toolCombo, &QComboBox::currentIndexChanged, [this] {
+		int tool = toolCombo->currentData().toInt();
+		if (tool == TOOL_IMAGE || tool == TOOL_STAMP) {
+			colorAction->setVisible(false);
+			imageAction->setVisible(true);
+		} else {
+			imageAction->setVisible(false);
+			colorAction->setVisible(true);
+		}
 		if (!draw_source)
 			return;
-		int tool = toolCombo->currentData().toInt();
 		obs_data_t *settings = obs_source_get_settings(draw_source);
 		if (obs_data_get_int(settings, "tool") != tool) {
 			obs_data_set_int(settings, "tool", tool);
@@ -605,6 +616,48 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			},
 			&longColor);
 	});
+	imageAction = toolbar->addAction(QString::fromUtf8(obs_module_text("ToolImage")), [this] {
+		if (!draw_source)
+			return;
+		obs_data_t *settings = obs_source_get_settings(draw_source);
+		const char *path = obs_data_get_string(settings, "tool_image_file");
+		obs_data_release(settings);
+		const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+		QString fileName = QFileDialog::getOpenFileName(main_window, QString::fromUtf8(obs_module_text("ToolImage")),
+								QString::fromUtf8(path), image_filter);
+		if (fileName.isEmpty())
+			return;
+		if (!draw_source)
+			return;
+		settings = obs_data_create();
+		obs_data_set_string(settings, "tool_image_file", fileName.toUtf8().constData());
+		obs_source_update(draw_source, settings);
+		obs_data_release(settings);
+		obs_source_t *scene_source = obs_frontend_get_current_scene();
+		if (!scene_source)
+			return;
+		obs_scene_t *scene = obs_scene_from_source(scene_source);
+		obs_source_release(scene_source);
+		if (!scene)
+			return;
+		obs_scene_enum_items(
+			scene,
+			[](obs_scene_t *, obs_sceneitem_t *item, void *data) {
+				auto source = obs_sceneitem_get_source(item);
+				if (!source || strcmp(obs_source_get_unversioned_id(source), "draw_source") != 0)
+					return true;
+				const char *path = (const char *)data;
+				obs_data_t *ss = obs_source_get_settings(source);
+				if (strcmp(obs_data_get_string(ss, "tool_image_file"), path) != 0) {
+					obs_data_set_string(ss, "tool_image_file", path);
+					obs_source_update(source, ss);
+				}
+				obs_data_release(ss);
+				return true;
+			},
+			(void *)fileName.toUtf8().constData());
+	});
+	imageAction->setVisible(false);
 	toolSizeSpin = new QDoubleSpinBox;
 	toolSizeSpin->setRange(0.0, 1000.0);
 	toolSizeSpin->setSuffix("px");
@@ -1498,8 +1551,8 @@ void DrawDock::DrawSourceUpdate()
 	int tool = (int)obs_data_get_int(settings, "tool");
 	if (toolCombo->currentIndex() != tool)
 		toolCombo->setCurrentIndex(tool);
-
-	QColor color = color_from_int(obs_data_get_int(settings, "tool_color"));
+	auto toolColor = obs_data_get_int(settings, "tool_color");
+	QColor color = color_from_int(toolColor);
 	auto w = toolbar->widgetForAction(colorAction);
 	QString s("background: " + color.name() + ";");
 	if (w->styleSheet() != s) {
@@ -1521,6 +1574,9 @@ void DrawDock::DrawSourceUpdate()
 		eraseCheckbox->setChecked(erase);
 	if (alpha >= 0.0 && abs(alphaSpin->value() - alpha) > 0.1)
 		alphaSpin->setValue(alpha);
+
+	if (tool == TOOL_STAMP || tool == TOOL_IMAGE)
+		imageAction->setIcon(CreateToolIcon(color, tool, alpha, size, obs_data_get_string(settings, "tool_image_file")));
 
 	obs_data_release(settings);
 }
@@ -1658,7 +1714,7 @@ void DrawDock::ApplyFavoriteTool(obs_data_t *settings)
 		settings);
 }
 
-QIcon DrawDock::CreateToolIcon(QColor toolColor, uint32_t tool, double alpha, double toolSize)
+QIcon DrawDock::CreateToolIcon(QColor toolColor, uint32_t tool, double alpha, double toolSize, const char *image)
 {
 	auto pixmap = QPixmap(256, 256);
 	if (alpha >= 0.0) {
@@ -1716,6 +1772,10 @@ QIcon DrawDock::CreateToolIcon(QColor toolColor, uint32_t tool, double alpha, do
 		auto painter = QPainter(&pixmap);
 		painter.setPen(QPen(toolColor, toolSize, Qt::DotLine));
 		painter.drawEllipse(QRect(toolSize / 2.0, toolSize / 2.0, 256.0 - toolSize, 256.0 - toolSize));
+	} else if (tool == TOOL_STAMP || tool == TOOL_IMAGE) {
+		if (image && strlen(image)) {
+			pixmap = QPixmap(QString::fromUtf8(image));
+		}
 	}
 
 	return QIcon(pixmap);
@@ -1723,14 +1783,14 @@ QIcon DrawDock::CreateToolIcon(QColor toolColor, uint32_t tool, double alpha, do
 
 QIcon DrawDock::CreateToolIcon(obs_data_t *ts)
 {
-
 	obs_data_t *settings = obs_data_get_obj(ts, "settings");
 	auto toolColor = color_from_int(obs_data_get_int(settings, "tool_color"));
 	auto tool = (uint32_t)obs_data_get_int(settings, "tool");
 	auto alpha = obs_data_get_double(settings, "tool_alpha");
 	auto toolSize = obs_data_get_double(settings, "tool_size") * 2.0;
+	auto toolImage = obs_data_get_string(settings, "tool_image_file");
 	obs_data_release(settings);
-	return CreateToolIcon(toolColor, tool, alpha, toolSize);
+	return CreateToolIcon(toolColor, tool, alpha, toolSize, toolImage);
 }
 
 void DrawDock::PostLoad()
@@ -1745,6 +1805,10 @@ void DrawDock::PostLoad()
 
 void DrawDock::FinishedLoad()
 {
+	auto imageIcon = static_cast<QMainWindow *>(obs_frontend_get_main_window())->property("imageIcon").value<QIcon>();
+	imageAction->setIcon(imageIcon);
+	toolCombo->setItemIcon(TOOL_STAMP, imageIcon);
+	toolCombo->setItemIcon(TOOL_IMAGE, imageIcon);
 	if (!obs_data_get_bool(config, "fullscreen"))
 		return;
 
