@@ -302,8 +302,7 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			obs_data_t *settings = obs_source_get_settings(draw_source);
 			QColor color = color_from_int(obs_data_get_int(settings, "cursor_color"));
 			obs_data_release(settings);
-			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-			color = QColorDialog::getColor(color, main_window, QString::fromUtf8(obs_module_text("CursorColor")));
+			color = QColorDialog::getColor(color, this, QString::fromUtf8(obs_module_text("CursorColor")));
 			if (!color.isValid())
 				return;
 			if (!draw_source)
@@ -578,8 +577,7 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 		obs_data_t *settings = obs_source_get_settings(draw_source);
 		QColor color = color_from_int(obs_data_get_int(settings, "tool_color"));
 		obs_data_release(settings);
-		const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-		color = QColorDialog::getColor(color, main_window, QString::fromUtf8(obs_module_text("ToolColor")));
+		color = QColorDialog::getColor(color, this, QString::fromUtf8(obs_module_text("ToolColor")));
 		if (!color.isValid())
 			return;
 		if (!draw_source)
@@ -1015,7 +1013,14 @@ static bool HandleSceneMouseClickEvent(obs_scene_t *scene, obs_sceneitem_t *item
 
 bool DrawDock::HandleMouseClickEvent(QMouseEvent *event)
 {
-	const bool mouseUp = event->type() == QEvent::MouseButtonRelease;
+	auto event_type = event->type();
+	const bool mouseUp = event_type == QEvent::MouseButtonRelease;
+	if (tabletActive) {
+		if (mouseUp)
+			tabletActive = false;
+		else
+			return true;
+	}
 	if (event->button() == Qt::LeftButton && event->modifiers().testFlag(Qt::ControlModifier)) {
 		if (!mouseUp) {
 			scrollingFromX = event->pos().x();
@@ -1024,7 +1029,7 @@ bool DrawDock::HandleMouseClickEvent(QMouseEvent *event)
 		return true;
 	}
 	uint32_t clickCount = 1;
-	if (event->type() == QEvent::MouseButtonDblClick)
+	if (event_type == QEvent::MouseButtonDblClick)
 		clickCount = 2;
 
 	struct obs_mouse_event mouseEvent = {};
@@ -1150,6 +1155,8 @@ static bool HandleSceneMouseMoveEvent(obs_scene_t *scene, obs_sceneitem_t *item,
 bool DrawDock::HandleMouseMoveEvent(QMouseEvent *event)
 {
 	if (!event)
+		return false;
+	if (tabletActive)
 		return false;
 	if (event->buttons() == Qt::LeftButton && event->modifiers().testFlag(Qt::ControlModifier)) {
 
@@ -1283,6 +1290,124 @@ bool DrawDock::HandleKeyEvent(QKeyEvent *event)
 	return true;
 }
 
+bool DrawDock::HandleTabletEvent(QTabletEvent *event)
+{
+	if (!event)
+		return false;
+
+	auto pressure = event->pressure();
+
+	auto event_type = event->type();
+	if (event_type == QEvent::TabletPress)
+		tabletActive = true;
+	else if (event_type == QEvent::TabletRelease)
+		tabletActive = false;
+	else if (pressure <= 0.0 && tabletActive)
+		tabletActive = false;
+	else if (pressure > 0.0 && !tabletActive)
+		pressure = 0.0;
+
+	int posx;
+	int posy;
+	GetSourceRelativeXY(event->position().x(), event->position().y(), posx, posy);
+	click_event ce{posx, posy, 0, 0, pressure <= 0.0, 1, nullptr};
+
+	obs_source_t *scene_source = obs_frontend_get_current_scene();
+	if (scene_source) {
+		if (obs_scene_t *scene = obs_scene_from_source(scene_source)) {
+			obs_scene_enum_items(scene, HandleSceneMouseClickEvent, &ce);
+		}
+		obs_source_release(scene_source);
+	}
+	if (ce.mouseTarget) {
+		auto ph = obs_source_get_proc_handler(ce.mouseTarget);
+		if (ph) {
+			struct calldata cd;
+			calldata_init(&cd);
+			calldata_set_int(&cd, "posx", ce.mouseEvent.x);
+			calldata_set_int(&cd, "posy", ce.mouseEvent.y);
+			calldata_set_float(&cd, "pressure", pressure);
+			proc_handler_call(ph, "tablet", &cd);
+			calldata_free(&cd);
+		}
+		if (pressure <= 0.0) {
+			if (mouse_down_target) {
+				if (mouse_down_target == draw_source) {
+					ph = obs_source_get_proc_handler(draw_source);
+					if (ph) {
+						struct calldata cd;
+						calldata_init(&cd);
+						calldata_set_int(&cd, "posx", posx);
+						calldata_set_int(&cd, "posy", posy);
+						calldata_set_float(&cd, "pressure", pressure);
+						proc_handler_call(ph, "tablet", &cd);
+						calldata_free(&cd);
+					}
+				} else if (mouse_down_target != ce.mouseTarget) {
+					ph = obs_source_get_proc_handler(mouse_down_target);
+					if (ph) {
+						struct calldata cd;
+						calldata_init(&cd);
+						calldata_set_int(&cd, "posx", posx);
+						calldata_set_int(&cd, "posy", posy);
+						calldata_set_float(&cd, "pressure", pressure);
+						proc_handler_call(ph, "tablet", &cd);
+						calldata_free(&cd);
+					}
+				}
+				mouse_down_target = nullptr;
+			}
+		} else {
+			mouse_down_target = ce.mouseTarget;
+		}
+
+	} else if (draw_source) {
+		auto ph = obs_source_get_proc_handler(draw_source);
+		if (ph) {
+			struct calldata cd;
+			calldata_init(&cd);
+			calldata_set_int(&cd, "posx", posx);
+			calldata_set_int(&cd, "posy", posy);
+			calldata_set_float(&cd, "pressure", pressure);
+			proc_handler_call(ph, "tablet", &cd);
+			calldata_free(&cd);
+		}
+		if (pressure <= 0.0) {
+			if (mouse_down_target && mouse_down_target != draw_source) {
+				ph = obs_source_get_proc_handler(mouse_down_target);
+				if (ph) {
+					struct calldata cd;
+					calldata_init(&cd);
+					calldata_set_int(&cd, "posx", posx);
+					calldata_set_int(&cd, "posy", posy);
+					calldata_set_float(&cd, "pressure", pressure);
+					proc_handler_call(ph, "tablet", &cd);
+					calldata_free(&cd);
+				}
+			}
+			mouse_down_target = nullptr;
+		} else {
+			mouse_down_target = draw_source;
+		}
+	} else if (pressure <= 0.0 && mouse_down_target) {
+		auto ph = obs_source_get_proc_handler(mouse_down_target);
+		if (ph) {
+			struct calldata cd;
+			calldata_init(&cd);
+			calldata_set_int(&cd, "posx", posx);
+			calldata_set_int(&cd, "posy", posy);
+			calldata_set_float(&cd, "pressure", pressure);
+			proc_handler_call(ph, "tablet", &cd);
+			calldata_free(&cd);
+		}
+		mouse_down_target = nullptr;
+	} else {
+		mouse_down_target = nullptr;
+	}
+
+	return true;
+}
+
 OBSEventFilter *DrawDock::BuildEventFilter()
 {
 	return new OBSEventFilter([this](QObject *obj, QEvent *event) {
@@ -1306,6 +1431,12 @@ OBSEventFilter *DrawDock::BuildEventFilter()
 		case QEvent::KeyPress:
 		case QEvent::KeyRelease:
 			return this->HandleKeyEvent(static_cast<QKeyEvent *>(event));
+		case QEvent::TabletPress:
+		case QEvent::TabletRelease:
+		case QEvent::TabletMove:
+		case QEvent::TabletEnterProximity:
+		case QEvent::TabletLeaveProximity:
+			return this->HandleTabletEvent(static_cast<QTabletEvent *>(event));
 		default:
 			return false;
 		}

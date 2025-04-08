@@ -51,6 +51,8 @@ private:
 	int scrollingFromX = 0;
 	int scrollingFromY = 0;
 
+	bool tabletActive = false;
+
 	QRect prevGeometry;
 	bool prevFloating;
 	Qt::DockWidgetArea prevArea;
@@ -64,6 +66,7 @@ private:
 	bool HandleMouseWheelEvent(QWheelEvent *event);
 	bool HandleFocusEvent(QFocusEvent *event);
 	bool HandleKeyEvent(QKeyEvent *event);
+	bool HandleTabletEvent(QTabletEvent *event);
 	OBSEventFilter *BuildEventFilter();
 
 	void DrawBackdrop(float cx, float cy);
@@ -78,7 +81,8 @@ private:
 	QAction *AddFavoriteTool(obs_data_t *settings = nullptr);
 	void ApplyFavoriteTool(obs_data_t *settings = nullptr);
 	QIcon CreateToolIcon(obs_data_t *settings);
-	QIcon CreateToolIcon(QColor toolColor, uint32_t tool, double alpha = 100.0, double toolSize = 20.0, const char *image = nullptr);
+	QIcon CreateToolIcon(QColor toolColor, uint32_t tool, double alpha = 100.0, double toolSize = 20.0,
+			     const char *image = nullptr);
 
 	static void DrawPreview(void *data, uint32_t cx, uint32_t cy);
 	static void frontend_event(enum obs_frontend_event event, void *data);

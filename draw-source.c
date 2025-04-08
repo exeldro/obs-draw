@@ -69,6 +69,7 @@ struct draw_source {
 	gs_image_file4_t *tool_image;
 	struct vec4 tool_color;
 	float tool_size;
+	float tablet_factor;
 
 	struct vec4 cursor_color;
 	float cursor_size;
@@ -97,7 +98,7 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 	gs_effect_set_int(ds->tool_param, ds->tool);
 	gs_effect_set_texture(ds->tool_image_param, ds->tool_image ? ds->tool_image->image3.image2.image.texture : NULL);
 	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
-	gs_effect_set_float(ds->tool_size_param, ds->tool_size);
+	gs_effect_set_float(ds->tool_size_param, ds->tool_size * ds->tablet_factor);
 	gs_effect_set_int(ds->tool_mode_param, ds->tool_mode);
 	gs_effect_set_bool(ds->shift_down_param, ds->shift_down);
 	gs_effect_set_texture(ds->image_param, tex);
@@ -240,11 +241,81 @@ void redo_proc_handler(void *data, calldata_t *cd)
 	redo(ds);
 }
 
+static bool draw_on_mouse_move(uint32_t tool)
+{
+	return tool == TOOL_PENCIL || tool == TOOL_BRUSH || tool == TOOL_STAMP;
+}
+
+void tablet_proc_handler(void *data, calldata_t *cd)
+{
+	struct draw_source *ds = data;
+	bool draw = draw_on_mouse_move(ds->tool);
+
+	double pressure = calldata_float(cd, "pressure");
+	if (pressure > 0.0 && draw) {
+		ds->mouse_previous_pos = ds->mouse_pos;
+	}
+	ds->mouse_pos.x = (float)calldata_int(cd, "posx");
+	ds->mouse_pos.y = (float)calldata_int(cd, "posy");
+	ds->mouse_active = pressure > 0.0;
+	ds->shift_down = false; //((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
+
+	ds->tablet_factor = draw?(float)pressure:1.0f;
+	if (ds->mouse_active && ds->tool_mode != TOOL_UP && draw) {
+		apply_tool(ds);
+
+	}
+
+	//if (pressure == 0.0 && draw)
+	//copy_to_undo(ds);
+
+	if (pressure > 0.0) {
+		if (ds->tool_mode != TOOL_DOWN) {
+			ds->tool_mode = TOOL_DOWN;
+			if (!draw) {
+				ds->mouse_previous_pos = ds->mouse_pos;
+			}
+		}
+		if (ds->tool == TOOL_SELECT_RECTANGLE || ds->tool == TOOL_SELECT_ELLIPSE) {
+			if (ds->mouse_pos.x > fminf(ds->select_from.x, ds->select_to.x) &&
+			    ds->mouse_pos.x < fmaxf(ds->select_from.x, ds->select_to.x) &&
+			    ds->mouse_pos.y > fminf(ds->select_from.y, ds->select_to.y) &&
+			    ds->mouse_pos.y < fmaxf(ds->select_from.y, ds->select_to.y)) {
+				ds->tool_mode = TOOL_DRAG;
+			}
+		}
+		if (draw) {
+			apply_tool(ds);
+		}
+	} else if (ds->tool_mode == TOOL_DOWN) {
+		if (!draw) {
+			if (ds->tool == TOOL_SELECT_RECTANGLE || ds->tool == TOOL_SELECT_ELLIPSE) {
+				ds->select_from = ds->mouse_previous_pos;
+				ds->select_to = ds->mouse_pos;
+			} else {
+				copy_to_undo(ds);
+				apply_tool(ds);
+			}
+		}
+		ds->tool_mode = TOOL_UP;
+		ds->tablet_factor = 1.0f;
+	} else if (ds->tool_mode == TOOL_DRAG) {
+		copy_to_undo(ds);
+		apply_tool(ds);
+		ds->select_from.x += ds->mouse_pos.x - ds->mouse_previous_pos.x;
+		ds->select_from.y += ds->mouse_pos.y - ds->mouse_previous_pos.y;
+		ds->select_to.x += ds->mouse_pos.x - ds->mouse_previous_pos.x;
+		ds->select_to.y += ds->mouse_pos.y - ds->mouse_previous_pos.y;
+		ds->tool_mode = TOOL_UP;
+	}
+}
+
 static void *ds_create(obs_data_t *settings, obs_source_t *source)
 {
 	struct draw_source *context = bzalloc(sizeof(struct draw_source));
 	context->source = source;
 
+	context->tablet_factor = 1.0f;
 	context->max_undo = 5;
 	context->size.x = (float)obs_data_get_int(settings, "width");
 	context->size.y = (float)obs_data_get_int(settings, "height");
@@ -282,6 +353,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 	proc_handler_add(ph, "void draw(in ptr data)", draw_proc_handler, context);
 	proc_handler_add(ph, "void undo()", undo_proc_handler, context);
 	proc_handler_add(ph, "void redo()", redo_proc_handler, context);
+	proc_handler_add(ph, "void tablet(in int posx, in int posy, in float pressure)", tablet_proc_handler, context);
 
 	obs_source_update(source, NULL);
 	return context;
@@ -395,11 +467,6 @@ static void apply_tool(struct draw_source *ds)
 	obs_leave_graphics();
 }
 
-static bool draw_on_mouse_move(uint32_t tool)
-{
-	return tool == TOOL_PENCIL || tool == TOOL_BRUSH || tool == TOOL_STAMP;
-}
-
 static void ds_mouse_move(void *data, const struct obs_mouse_event *event, bool mouse_leave)
 {
 	struct draw_source *ds = data;
@@ -429,6 +496,7 @@ void ds_mouse_click(void *data, const struct obs_mouse_event *event, int32_t typ
 	context->mouse_pos.x = (float)event->x;
 	context->mouse_pos.y = (float)event->y;
 	context->shift_down = ((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
+	context->tablet_factor = 1.0f;
 	bool draw = draw_on_mouse_move(context->tool);
 	if (draw) {
 		context->mouse_previous_pos.x = -1.0f;

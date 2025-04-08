@@ -58,7 +58,7 @@ float4 draw_line(float2 coord, float2 from, float2 to, float4 color, float dista
 	{
 		effective_alpha = color.a - (color.a * (d / tool_size) * distance_factor);
 	}
-	if (from.x >= 0.0 && from.y >= 0.0)
+	if (from.x >= 0.0 && from.y >= 0.0 && (from.x != 0.0 || from.y != 0.0))
 	{
 		float2 lineDir = from - to;
 		float2 perpDir = float2(lineDir.y, -lineDir.x);
