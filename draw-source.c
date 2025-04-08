@@ -266,9 +266,6 @@ void tablet_proc_handler(void *data, calldata_t *cd)
 
 	}
 
-	//if (pressure == 0.0 && draw)
-	//copy_to_undo(ds);
-
 	if (pressure > 0.0) {
 		if (ds->tool_mode != TOOL_DOWN) {
 			ds->tool_mode = TOOL_DOWN;
@@ -296,6 +293,8 @@ void tablet_proc_handler(void *data, calldata_t *cd)
 				copy_to_undo(ds);
 				apply_tool(ds);
 			}
+		} else {
+			copy_to_undo(ds);
 		}
 		ds->tool_mode = TOOL_UP;
 		ds->tablet_factor = 1.0f;
@@ -316,7 +315,7 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 	context->source = source;
 
 	context->tablet_factor = 1.0f;
-	context->max_undo = 5;
+	context->max_undo = 10;
 	context->size.x = (float)obs_data_get_int(settings, "width");
 	context->size.y = (float)obs_data_get_int(settings, "height");
 	vec4_from_rgba_srgb(&context->cursor_color, 0xFFFFFF00);
@@ -741,7 +740,7 @@ static void ds_get_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "tool_alpha", 100.0);
 	obs_data_set_default_bool(settings, "show_cursor", true);
 	obs_data_set_default_double(settings, "cursor_size", 10);
-	obs_data_set_default_int(settings, "max_undo", 5);
+	obs_data_set_default_int(settings, "max_undo", 10);
 }
 
 static void ds_video_tick(void *data, float seconds)

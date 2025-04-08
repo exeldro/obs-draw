@@ -469,18 +469,49 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			QAction *a = fullMenu->addAction(str, this, SLOT(OpenFullScreenProjector()));
 			a->setProperty("monitor", i);
 		}
-		menu.addAction(QString::fromUtf8(obs_module_text("ResetDock")), [this] {
+		menu.addAction(QString::fromUtf8(obs_module_text("Dock")), [this] {
 			auto dock = (QDockWidget *)parent();
-			if (dock->isFullScreen()) {
-				if (config)
-					obs_data_set_bool(config, "fullscreen", false);
+			if (!dock->parent()) {
 				auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 				dock->setParent(main);
 				dock->showNormal();
+				if (!prevGeometry.isNull()) {
+					if (dock->isFloating() != prevFloating)
+						dock->setFloating(prevFloating);
+					dock->setGeometry(prevGeometry);
+					if (!prevFloating)
+						main->addDockWidget(prevArea, dock);
+				} else {
+					if (!dock->isFloating())
+						dock->setFloating(true);
+					dock->resize(860, 530);
+				}
+			} else {
+				dock->showNormal();
+			}
+			if (config) {
+				obs_data_set_bool(config, "fullscreen", false);
+				obs_data_set_bool(config, "windowed", false);
+			}
+		});
+		menu.addAction(QString::fromUtf8(obs_module_text("Windowed")), [this] {
+			auto dock = (QDockWidget *)parent();
+			if (dock->parent()) {
+				prevGeometry = dock->geometry();
+				prevFloating = dock->isFloating();
+				auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
+				prevArea = main->dockWidgetArea(dock);
 			}
 			if (!dock->isFloating())
 				dock->setFloating(true);
+			if (dock->parent())
+				dock->setParent(nullptr);
+			dock->showNormal();
 			dock->resize(860, 530);
+			if (config) {
+				obs_data_set_bool(config, "fullscreen", false);
+				obs_data_set_bool(config, "windowed", true);
+			}
 		});
 
 		menu.exec(QCursor::pos());
@@ -1940,15 +1971,21 @@ void DrawDock::FinishedLoad()
 	imageAction->setIcon(imageIcon);
 	toolCombo->setItemIcon(TOOL_STAMP, imageIcon);
 	toolCombo->setItemIcon(TOOL_IMAGE, imageIcon);
-	if (!obs_data_get_bool(config, "fullscreen"))
-		return;
+	if (obs_data_get_bool(config, "fullscreen")) {
 
-	auto dock = (QDockWidget *)parent();
-	dock->setFloating(true);
-	dock->setParent(nullptr);
-	dock->setGeometry(QRect(obs_data_get_int(config, "fullscreen_left"), obs_data_get_int(config, "fullscreen_top"),
-				obs_data_get_int(config, "fullscreen_width"), obs_data_get_int(config, "fullscreen_height")));
-	dock->showFullScreen();
+		auto dock = (QDockWidget *)parent();
+		dock->setFloating(true);
+		dock->setParent(nullptr);
+		dock->setGeometry(QRect(obs_data_get_int(config, "fullscreen_left"), obs_data_get_int(config, "fullscreen_top"),
+					obs_data_get_int(config, "fullscreen_width"),
+					obs_data_get_int(config, "fullscreen_height")));
+		dock->showFullScreen();
+	} else if (obs_data_get_bool(config, "windowed")) {
+		auto dock = (QDockWidget *)parent();
+		dock->setFloating(true);
+		dock->setParent(nullptr);
+		dock->showNormal();
+	}
 }
 
 void DrawDock::vendor_request_version(obs_data_t *request_data, obs_data_t *response_data, void *)
@@ -2065,7 +2102,7 @@ void DrawDock::OpenFullScreenProjector()
 	int monitor = sender()->property("monitor").toInt();
 	auto screen = QGuiApplication::screens()[monitor];
 	auto dock = (QDockWidget *)parent();
-	if (!dock->isFullScreen()) {
+	if (dock->parent()) {
 		prevGeometry = dock->geometry();
 		prevFloating = dock->isFloating();
 		auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
@@ -2077,6 +2114,7 @@ void DrawDock::OpenFullScreenProjector()
 	dock->setParent(nullptr);
 	dock->showFullScreen();
 	if (config) {
+		obs_data_set_bool(config, "windowed", false);
 		obs_data_set_bool(config, "fullscreen", true);
 		obs_data_set_int(config, "fullscreen_left", geometry.left());
 		obs_data_set_int(config, "fullscreen_top", geometry.top());
