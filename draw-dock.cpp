@@ -319,9 +319,7 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			obs_data_t *settings = obs_source_get_settings(draw_source);
 			const char *path = obs_data_get_string(settings, "cursor_file");
 			obs_data_release(settings);
-			const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-			QString fileName = QFileDialog::getOpenFileName(main_window,
-									QString::fromUtf8(obs_module_text("CursorImage")),
+			QString fileName = QFileDialog::getOpenFileName(this, QString::fromUtf8(obs_module_text("CursorImage")),
 									QString::fromUtf8(path), image_filter);
 			if (fileName.isEmpty())
 				return;
@@ -658,8 +656,7 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 		obs_data_t *settings = obs_source_get_settings(draw_source);
 		const char *path = obs_data_get_string(settings, "tool_image_file");
 		obs_data_release(settings);
-		const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
-		QString fileName = QFileDialog::getOpenFileName(main_window, QString::fromUtf8(obs_module_text("ToolImage")),
+		QString fileName = QFileDialog::getOpenFileName(this, QString::fromUtf8(obs_module_text("ToolImage")),
 								QString::fromUtf8(path), image_filter);
 		if (fileName.isEmpty())
 			return;
