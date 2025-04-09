@@ -471,8 +471,8 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 		}
 		menu.addAction(QString::fromUtf8(obs_module_text("Dock")), [this] {
 			auto dock = (QDockWidget *)parent();
+			auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 			if (!dock->parent()) {
-				auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 				dock->setParent(main);
 				dock->showNormal();
 				if (!prevGeometry.isNull()) {
@@ -482,12 +482,19 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 					if (!prevFloating)
 						main->addDockWidget(prevArea, dock);
 				} else {
-					if (!dock->isFloating())
-						dock->setFloating(true);
+					if (dock->isFloating())
+						dock->setFloating(false);
 					dock->resize(860, 530);
+					if (main->dockWidgetArea(dock) == Qt::NoDockWidgetArea)
+						main->addDockWidget(Qt::LeftDockWidgetArea, dock);
 				}
 			} else {
 				dock->showNormal();
+				if (dock->isFloating())
+					dock->setFloating(false);
+				dock->resize(860, 530);
+				if (main->dockWidgetArea(dock) == Qt::NoDockWidgetArea)
+					main->addDockWidget(Qt::LeftDockWidgetArea, dock);
 			}
 			if (config) {
 				obs_data_set_bool(config, "fullscreen", false);
