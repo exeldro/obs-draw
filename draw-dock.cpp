@@ -524,10 +524,10 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 	toolbar->widgetForAction(a)->setProperty("themeID", "propertiesIconSmall");
 	toolbar->widgetForAction(a)->setProperty("class", "icon-gear");
 
-	auto hotkeyId = obs_hotkey_register_frontend("draw_clear", obs_module_text("DrawClear"), clear_hotkey, this);
+	clearHotkey = obs_hotkey_register_frontend("draw_clear", obs_module_text("DrawClear"), clear_hotkey, this);
 	auto hotkeys = obs_data_get_array(config, "clear_hotkey");
 	if (hotkeys) {
-		obs_hotkey_load(hotkeyId, hotkeys);
+		obs_hotkey_load(clearHotkey, hotkeys);
 		obs_data_array_release(hotkeys);
 	}
 
@@ -1639,8 +1639,10 @@ void DrawDock::SaveConfig()
 	ensure_directory(path);
 
 	obs_data_array_t *clearHotkeyData = obs_hotkey_save(clearHotkey);
-	obs_data_set_array(config, "clear_hotkey", clearHotkeyData);
-	obs_data_array_release(clearHotkeyData);
+	if (clearHotkeyData) {
+		obs_data_set_array(config, "clear_hotkey", clearHotkeyData);
+		obs_data_array_release(clearHotkeyData);
+	}
 
 	obs_data_array_t *tools = obs_data_get_array(config, "tools");
 	size_t count = obs_data_array_count(tools);
