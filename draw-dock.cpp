@@ -164,6 +164,41 @@ static inline long long color_to_int(QColor color)
 	return shift(color.red(), 0) | shift(color.green(), 8) | shift(color.blue(), 16) | shift(color.alpha(), 24);
 }
 
+#ifdef _WIN32
+bool IsAlwaysOnTop(QWidget *window)
+{
+	DWORD exStyle = GetWindowLong((HWND)window->winId(), GWL_EXSTYLE);
+	return (exStyle & WS_EX_TOPMOST) != 0;
+}
+#else
+bool IsAlwaysOnTop(QWidget *window)
+{
+	return (window->windowFlags() & Qt::WindowStaysOnTopHint) != 0;
+}
+#endif
+
+#ifdef _WIN32
+void SetAlwaysOnTop(QWidget *window, bool enable)
+{
+	HWND hwnd = (HWND)window->winId();
+	SetWindowPos(hwnd, enable ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+#else
+void SetAlwaysOnTop(QWidget *window, bool enable)
+{
+	Qt::WindowFlags flags = window->windowFlags();
+
+	if (enable) {
+		flags |= Qt::WindowStaysOnTopHint;
+	} else {
+		flags &= ~Qt::WindowStaysOnTopHint;
+	}
+
+	window->setWindowFlags(flags);
+	window->show();
+}
+#endif
+
 DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventFilter()), preview(new OBSQTDisplay(this))
 {
 	auto ml = new QVBoxLayout(this);
@@ -431,7 +466,10 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 		obs_data_release(settings);
 
 		menu.addSeparator();
-		auto fullMenu = menu.addMenu(QString::fromUtf8(obs_module_text("Fullscreen")));
+		auto d = (QDockWidget *)parent();
+		auto action = menu.addAction(QString::fromUtf8(obs_module_text("Fullscreen"))); 
+		auto fullMenu = new QMenu();
+		action->setMenu(fullMenu);
 		QList<QScreen *> screens = QGuiApplication::screens();
 		for (int i = 0; i < screens.size(); i++) {
 			QScreen *screen = screens[i];
@@ -467,7 +505,10 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			QAction *a = fullMenu->addAction(str, this, SLOT(OpenFullScreenProjector()));
 			a->setProperty("monitor", i);
 		}
-		menu.addAction(QString::fromUtf8(obs_module_text("Dock")), [this] {
+		action->setCheckable(true);
+		action->setChecked(d->parent() == nullptr && config && obs_data_get_bool(config, "fullscreen"));
+
+		action = menu.addAction(QString::fromUtf8(obs_module_text("Dock")), [this] {
 			auto dock = (QDockWidget *)parent();
 			auto main = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 			if (!dock->parent()) {
@@ -499,7 +540,9 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 				obs_data_set_bool(config, "windowed", false);
 			}
 		});
-		menu.addAction(QString::fromUtf8(obs_module_text("Windowed")), [this] {
+		action->setCheckable(true);
+		action->setChecked(d->parent() != nullptr);
+		action = menu.addAction(QString::fromUtf8(obs_module_text("Windowed")), [this] {
 			auto dock = (QDockWidget *)parent();
 			if (dock->parent()) {
 				prevGeometry = dock->geometry();
@@ -518,6 +561,18 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 				obs_data_set_bool(config, "windowed", true);
 			}
 		});
+		action->setCheckable(true);
+		action->setChecked(d->parent() == nullptr && (!config || obs_data_get_bool(config, "windowed")));
+		action = menu.addAction(QString::fromUtf8(obs_module_text("AlwaysOnTop")), [&] {
+			auto dock = (QDockWidget *)parent();
+			bool aot = !IsAlwaysOnTop(dock);
+			SetAlwaysOnTop(dock, aot);
+			if (config)
+				obs_data_set_bool(config, "always_on_top", aot);
+
+		});
+		action->setCheckable(true);
+		action->setChecked(IsAlwaysOnTop((QDockWidget *)parent()));
 
 		menu.exec(QCursor::pos());
 	});
@@ -1662,6 +1717,11 @@ void DrawDock::SaveConfig()
 	}
 	obs_data_array_release(tools);
 
+	if (obs_data_get_bool(config, "windowed")) {
+		auto dock = (QDockWidget *)parent();
+		obs_data_set_string(config, "window_geometry", dock->saveGeometry().toBase64().constData());
+	}
+
 	if (obs_data_save_json_safe(config, path, "tmp", "bak")) {
 		blog(LOG_INFO, "[Draw Dock] Saved settings");
 	} else {
@@ -1977,9 +2037,8 @@ void DrawDock::FinishedLoad()
 	imageAction->setIcon(imageIcon);
 	toolCombo->setItemIcon(TOOL_STAMP, imageIcon);
 	toolCombo->setItemIcon(TOOL_IMAGE, imageIcon);
+	auto dock = (QDockWidget *)parent();
 	if (obs_data_get_bool(config, "fullscreen")) {
-
-		auto dock = (QDockWidget *)parent();
 		dock->setFloating(true);
 		dock->setParent(nullptr);
 		dock->setGeometry(QRect(obs_data_get_int(config, "fullscreen_left"), obs_data_get_int(config, "fullscreen_top"),
@@ -1987,11 +2046,18 @@ void DrawDock::FinishedLoad()
 					obs_data_get_int(config, "fullscreen_height")));
 		dock->showFullScreen();
 	} else if (obs_data_get_bool(config, "windowed")) {
-		auto dock = (QDockWidget *)parent();
 		dock->setFloating(true);
 		dock->setParent(nullptr);
 		dock->showNormal();
+
+		const char * geom = obs_data_get_string(config, "window_geometry");
+		if (geom && strlen(geom)) {
+			QByteArray ba = QByteArray::fromBase64(QByteArray(geom));
+			dock->restoreGeometry(ba);
+		}
 	}
+	if (obs_data_get_bool(config, "always_on_top"))
+		SetAlwaysOnTop(dock, true);
 }
 
 void DrawDock::vendor_request_version(obs_data_t *request_data, obs_data_t *response_data, void *)
