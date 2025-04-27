@@ -467,7 +467,7 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 
 		menu.addSeparator();
 		auto d = (QDockWidget *)parent();
-		auto action = menu.addAction(QString::fromUtf8(obs_module_text("Fullscreen"))); 
+		auto action = menu.addAction(QString::fromUtf8(obs_module_text("Fullscreen")));
 		auto fullMenu = new QMenu();
 		action->setMenu(fullMenu);
 		QList<QScreen *> screens = QGuiApplication::screens();
@@ -569,7 +569,6 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			SetAlwaysOnTop(dock, aot);
 			if (config)
 				obs_data_set_bool(config, "always_on_top", aot);
-
 		});
 		action->setCheckable(true);
 		action->setChecked(IsAlwaysOnTop((QDockWidget *)parent()));
@@ -585,6 +584,14 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 		obs_hotkey_load(clearHotkey, hotkeys);
 		obs_data_array_release(hotkeys);
 	}
+	showHideHotkey = obs_hotkey_pair_register_frontend("draw_show", obs_module_text("DrawShow"), "draw_hide",
+							   obs_module_text("DrawHide"), show_hotkey, hide_hotkey, this, this);
+
+	obs_data_array_t *show_hotkeys = obs_data_get_array(config, "show_hotkey");
+	obs_data_array_t *hide_hotkeys = obs_data_get_array(config, "hide_hotkey");
+	obs_hotkey_pair_load(showHideHotkey, show_hotkeys, hide_hotkeys);
+	obs_data_array_release(show_hotkeys);
+	obs_data_array_release(hide_hotkeys);
 
 	obs_data_array_t *tools = obs_data_get_array(config, "tools");
 	auto count = obs_data_array_count(tools);
@@ -876,6 +883,8 @@ DrawDock::~DrawDock()
 {
 	if (clearHotkey != OBS_INVALID_HOTKEY_ID)
 		obs_hotkey_unregister(clearHotkey);
+	if (showHideHotkey != OBS_INVALID_HOTKEY_PAIR_ID)
+		obs_hotkey_pair_unregister(showHideHotkey);
 	for (auto i = favoriteToolHotkeys.begin(); i != favoriteToolHotkeys.end(); i++) {
 		obs_hotkey_unregister(i->first);
 	}
@@ -1699,6 +1708,18 @@ void DrawDock::SaveConfig()
 		obs_data_array_release(clearHotkeyData);
 	}
 
+	obs_data_array_t *showHotkeyData = nullptr;
+	obs_data_array_t *hideHotkeyData = nullptr;
+	obs_hotkey_pair_save(showHideHotkey, &showHotkeyData, &hideHotkeyData);
+	if (showHotkeyData) {
+		obs_data_set_array(config, "show_hotkey", showHotkeyData);
+		obs_data_array_release(showHotkeyData);
+	}
+	if (hideHotkeyData) {
+		obs_data_set_array(config, "hide_hotkey", hideHotkeyData);
+		obs_data_array_release(hideHotkeyData);
+	}
+
 	obs_data_array_t *tools = obs_data_get_array(config, "tools");
 	size_t count = obs_data_array_count(tools);
 	for (size_t i = 0; i < count; i++) {
@@ -1900,6 +1921,30 @@ void DrawDock::clear_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, 
 	window->ClearDraw();
 }
 
+bool DrawDock::show_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
+{
+	UNUSED_PARAMETER(hotkey);
+	UNUSED_PARAMETER(id);
+	DrawDock *window = static_cast<DrawDock *>(data);
+	if (pressed && window->parentWidget()->isHidden()) {
+		window->parentWidget()->show();
+		return true;
+	}
+	return false;
+}
+
+bool DrawDock::hide_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed)
+{
+	UNUSED_PARAMETER(hotkey);
+	UNUSED_PARAMETER(id);
+	DrawDock *window = static_cast<DrawDock *>(data);
+	if (pressed && !window->parentWidget()->isHidden()) {
+		window->parentWidget()->hide();
+		return true;
+	}
+	return false;
+}
+
 void DrawDock::favorite_tool_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed)
 {
 	UNUSED_PARAMETER(hotkey);
@@ -2050,7 +2095,7 @@ void DrawDock::FinishedLoad()
 		dock->setParent(nullptr);
 		dock->showNormal();
 
-		const char * geom = obs_data_get_string(config, "window_geometry");
+		const char *geom = obs_data_get_string(config, "window_geometry");
 		if (geom && strlen(geom)) {
 			QByteArray ba = QByteArray::fromBase64(QByteArray(geom));
 			dock->restoreGeometry(ba);

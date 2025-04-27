@@ -44,6 +44,7 @@ private:
 	obs_data_t *config;
 	std::map<obs_hotkey_id, std::pair<QAction *, obs_data_t *>> favoriteToolHotkeys;
 	obs_hotkey_id clearHotkey = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_pair_id showHideHotkey = OBS_INVALID_HOTKEY_PAIR_ID;
 
 	float zoom = 1.0f;
 	float scrollX = 0.5f;
@@ -90,6 +91,8 @@ private:
 	static void draw_source_destroy(void *data, calldata_t *cd);
 	static void source_create(void *data, calldata_t *cd);
 	static void clear_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
+	static bool show_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed);
+	static bool hide_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed);
 	static void favorite_tool_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
 	static void vendor_request_version(obs_data_t *request_data, obs_data_t *response_data, void *);
 	static void vendor_request_clear(obs_data_t *request_data, obs_data_t *response_data, void *);
