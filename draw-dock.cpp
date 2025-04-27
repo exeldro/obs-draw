@@ -6,6 +6,7 @@
 #include <graphics/matrix4.h>
 #include <obs-module.h>
 #include <QColorDialog>
+#include <QDesktopServices>
 #include <QFileDialog>
 #include <QGuiApplication>
 #include <QMainWindow>
@@ -572,6 +573,11 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 		});
 		action->setCheckable(true);
 		action->setChecked(IsAlwaysOnTop((QDockWidget *)parent()));
+
+		menu.addSeparator();
+		menu.addAction(QString::fromUtf8("Draw (" PROJECT_VERSION ")"),
+			       [] { QDesktopServices::openUrl(QUrl("https://obsproject.com/forum/resources/draw.2081/")); });
+		menu.addAction(QString::fromUtf8("By Exeldro"), [] { QDesktopServices::openUrl(QUrl("https://www.exeldro.com")); });
 
 		menu.exec(QCursor::pos());
 	});
