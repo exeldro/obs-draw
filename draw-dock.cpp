@@ -1692,7 +1692,9 @@ void DrawDock::DestroyDrawSource()
 
 	for (uint32_t i = 0; i < MAX_CHANNELS; i++) {
 		obs_source_t *s = obs_get_output_source(i);
-		if (s == source) {
+		if (!s)
+			continue;
+		if (s == source || strcmp(obs_source_get_name(s), "Global Draw Source") == 0) {
 			obs_set_output_source(i, nullptr);
 		}
 		obs_source_release(s);
@@ -2268,4 +2270,16 @@ void DrawDock::EscapeTriggered()
 			dock->setFloating(true);
 		dock->resize(860, 530);
 	}
+}
+
+void DrawDock::showEvent(QShowEvent *)
+{
+	if (vendor)
+		obs_websocket_vendor_emit_event(vendor, "show", nullptr);
+}
+
+void DrawDock::hideEvent(QHideEvent *)
+{
+	if (vendor)
+		obs_websocket_vendor_emit_event(vendor, "hide", nullptr);
 }

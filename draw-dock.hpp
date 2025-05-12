@@ -98,6 +98,10 @@ private:
 	static void vendor_request_clear(obs_data_t *request_data, obs_data_t *response_data, void *);
 	static void vendor_request_draw(obs_data_t *request_data, obs_data_t *response_data, void *);
 
+protected:
+	virtual void showEvent(QShowEvent *) override;
+	virtual void hideEvent(QHideEvent *) override;
+
 private slots:
 	void DrawSourceUpdate();
 	void SceneChanged();
