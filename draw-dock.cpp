@@ -1933,9 +1933,17 @@ bool DrawDock::show_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotk
 {
 	UNUSED_PARAMETER(hotkey);
 	UNUSED_PARAMETER(id);
+	if (!pressed)
+		return false;
 	DrawDock *window = static_cast<DrawDock *>(data);
-	if (pressed && window->parentWidget()->isHidden()) {
-		window->parentWidget()->show();
+	if (window->parentWidget()->isHidden()) {
+		obs_queue_task(
+			OBS_TASK_UI,
+			[](void *param) {
+				DrawDock *window = static_cast<DrawDock *>(param);
+				window->parentWidget()->show();
+			},
+			data, false);
 		return true;
 	}
 	return false;
@@ -1945,9 +1953,17 @@ bool DrawDock::hide_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotk
 {
 	UNUSED_PARAMETER(hotkey);
 	UNUSED_PARAMETER(id);
+	if (!pressed)
+		return false;
 	DrawDock *window = static_cast<DrawDock *>(data);
-	if (pressed && !window->parentWidget()->isHidden()) {
-		window->parentWidget()->hide();
+	if (!window->parentWidget()->isHidden()) {
+		obs_queue_task(
+			OBS_TASK_UI,
+			[](void *param) {
+				DrawDock *window = static_cast<DrawDock *>(param);
+				window->parentWidget()->hide();
+			},
+			data, false);
 		return true;
 	}
 	return false;
