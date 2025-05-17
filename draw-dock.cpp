@@ -1567,6 +1567,10 @@ void DrawDock::frontend_event(enum obs_frontend_event event, void *data)
 
 void DrawDock::CreateDrawSource(obs_source_t *new_source)
 {
+	static bool loading = false;
+	if (loading)
+		return;
+	loading = true;
 	bool set_output = true;
 	for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
 		obs_source_t *source = obs_get_output_source(i);
@@ -1595,6 +1599,7 @@ void DrawDock::CreateDrawSource(obs_source_t *new_source)
 	if (draw_source && strcmp(obs_source_get_unversioned_id(draw_source), "draw_source") != 0) {
 		obs_source_release(draw_source);
 		draw_source = nullptr;
+		loading = false;
 		return;
 	}
 
@@ -1629,6 +1634,8 @@ void DrawDock::CreateDrawSource(obs_source_t *new_source)
 	}
 	obs_data_release(settings);
 
+	loading = false;
+
 	signal_handler_t *sh = obs_source_get_signal_handler(draw_source);
 	signal_handler_connect(sh, "update", draw_source_update, this);
 	signal_handler_connect(sh, "destroy", draw_source_destroy, this);
@@ -1636,6 +1643,10 @@ void DrawDock::CreateDrawSource(obs_source_t *new_source)
 		for (uint32_t i = MAX_CHANNELS - 1; i > 0; i--) {
 			obs_source_t *source = obs_get_output_source(i);
 			if (source) {
+				if (strcmp(obs_source_get_unversioned_id(source), "draw_source") == 0) {
+					obs_source_release(source);
+					return;
+				}
 				obs_source_release(source);
 				continue;
 			}
