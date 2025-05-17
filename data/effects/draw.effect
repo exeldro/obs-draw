@@ -142,17 +142,18 @@ float4 PSDraw(VertInOut vert_in) : TARGET
 {
 	float4 orig = image.Sample(def_sampler, vert_in.uv);
 	float2 coord = vert_in.uv * uv_size;
+	float effective_cursor_size = cursor_size <= 0.0f ? tool_size : cursor_size;
 	if (draw_cursor == 1)
 	{
 		float d = distance(coord, uv_mouse);
-		if (d < cursor_size)
+		if (d < effective_cursor_size)
 			return cursor_color;
 	}
 	else if (draw_cursor == 2)
 	{
-		if (abs(coord.x - uv_mouse.x) < cursor_size && abs(coord.y - uv_mouse.y) < cursor_size)
+		if (abs(coord.x - uv_mouse.x) < effective_cursor_size && abs(coord.y - uv_mouse.y) < effective_cursor_size)
 		{
-			float2 cursor_pos = (coord - uv_mouse) / float2(cursor_size * 2.0, cursor_size * 2.0) + float2(0.5, 0.5);
+			float2 cursor_pos = (coord - uv_mouse) / float2(effective_cursor_size * 2.0, effective_cursor_size * 2.0) + float2(0.5, 0.5);
 			float4 cc = cursor_image.Sample(def_sampler, cursor_pos);
 			if (cc.a > 0.0)
 				return cc;

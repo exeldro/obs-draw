@@ -564,7 +564,7 @@ static void ds_update(void *data, obs_data_t *settings)
 	context->size.y = (float)obs_data_get_int(settings, "height");
 	context->tool = (uint32_t)obs_data_get_int(settings, "tool");
 	context->show_mouse = obs_data_get_bool(settings, "show_cursor");
-	context->cursor_size = (float)obs_data_get_double(settings, "cursor_size");
+	context->cursor_size = obs_data_get_bool(settings, "cursor_custom_size") ? (float)obs_data_get_double(settings, "cursor_size") : 0.0f;
 	vec4_from_rgba(&context->cursor_color, (uint32_t)obs_data_get_int(settings, "cursor_color"));
 	context->cursor_color.w = 1.0f;
 	vec4_from_rgba(&context->tool_color, (uint32_t)obs_data_get_int(settings, "tool_color"));
@@ -714,8 +714,14 @@ static obs_properties_t *ds_get_properties(void *data)
 	obs_property_float_set_suffix(p, "px");
 
 	obs_properties_add_color(props, "cursor_color", obs_module_text("CursorColor"));
-	p = obs_properties_add_float_slider(props, "cursor_size", obs_module_text("CursorSize"), 0.0, 100.0, 0.1);
+
+	obs_properties_t *cursor = obs_properties_create();
+
+	p = obs_properties_add_float_slider(cursor, "cursor_size", obs_module_text("CursorSize"), 0.0, 100.0, 0.1);
 	obs_property_float_set_suffix(p, "px");
+
+	obs_properties_add_group(props, "cursor_custom_size", obs_module_text("CursorCustomSize"), OBS_GROUP_CHECKABLE, cursor);
+
 	obs_properties_add_path(props, "cursor_file", obs_module_text("CursorFile"), OBS_PATH_FILE, image_filter, NULL);
 
 	obs_properties_add_int(props, "max_undo", obs_module_text("UndoMax"), 1, 10000, 1);
@@ -739,6 +745,7 @@ static void ds_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "tool_color", 0xFF0000FF);
 	obs_data_set_default_double(settings, "tool_alpha", 100.0);
 	obs_data_set_default_bool(settings, "show_cursor", true);
+	obs_data_set_default_bool(settings, "custom_cursor_size", true);
 	obs_data_set_default_double(settings, "cursor_size", 10);
 	obs_data_set_default_int(settings, "max_undo", 10);
 }

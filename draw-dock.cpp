@@ -366,11 +366,23 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			obs_source_update(draw_source, settings);
 			obs_data_release(settings);
 		});
+		a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("CursorCustomSize")));
+		a->setCheckable(true);
+		a->setChecked(obs_data_get_bool(settings, "custom_cursor_size"));
+		connect(a, &QAction::triggered, [this, a] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_bool(settings, "custom_cursor_size", a->isChecked());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
 		auto wa = new QWidgetAction(cursorMenu);
 		auto cursorSize = new QDoubleSpinBox();
 		cursorSize->setSuffix("px");
 		cursorSize->setValue(obs_data_get_double(settings, "cursor_size"));
 		cursorSize->setRange(0.0, 1000.0);
+		cursorSize->setEnabled(a->isChecked());
 		wa->setDefaultWidget(cursorSize);
 		cursorMenu->addAction(wa);
 
