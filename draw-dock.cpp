@@ -394,6 +394,19 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 			obs_source_update(draw_source, settings);
 			obs_data_release(settings);
 		});
+
+		a = menu.addAction(QString::fromUtf8(obs_module_text("ClearOnSceneTransition")));
+		a->setCheckable(true);
+		a->setChecked(obs_data_get_bool(settings, "clear_on_scene_transition"));
+		connect(a, &QAction::triggered, [this, a] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_bool(settings, "clear_on_scene_transition", a->isChecked());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+
 		menu.addSeparator();
 
 		menu.addAction(QString::fromUtf8(obs_module_text("Undo")), [this] {

@@ -2,6 +2,8 @@
 #include "version.h"
 #include <graphics/image-file.h>
 #include <obs-module.h>
+#include <obs-frontend-api.h>
+
 #if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 1, 0)
 #include <util/deque.h>
 #define circlebuf_peek_front deque_peek_front
@@ -76,6 +78,7 @@ struct draw_source {
 	char *cursor_image_path;
 	gs_image_file4_t *cursor_image;
 	uint64_t last_tick;
+	bool clear_on_transition;
 };
 
 const char *ds_get_name(void *data)
@@ -358,9 +361,20 @@ static void *ds_create(obs_data_t *settings, obs_source_t *source)
 	return context;
 }
 
+static void ds_frontend_event(enum obs_frontend_event event, void *data)
+{
+	struct draw_source *context = data;
+	if (event == OBS_FRONTEND_EVENT_SCENE_CHANGED) {
+		if (context->clear_on_transition) {
+			clear(context);
+		}
+	}
+}
+
 static void ds_destroy(void *data)
 {
 	struct draw_source *context = data;
+	obs_frontend_remove_event_callback(ds_frontend_event, data);
 	bool graphics = false;
 	if (context->undo.size) {
 		graphics = true;
@@ -559,6 +573,15 @@ void ds_key_click(void *data, const struct obs_key_event *event, bool key_up)
 static void ds_update(void *data, obs_data_t *settings)
 {
 	struct draw_source *context = data;
+
+	bool clear_on_transition = obs_data_get_bool(settings, "clear_on_scene_transition");
+	if (clear_on_transition && !context->clear_on_transition) {
+		obs_frontend_add_event_callback(ds_frontend_event, data);
+		context->clear_on_transition = clear_on_transition;
+	} else if (!clear_on_transition && context->clear_on_transition){
+		obs_frontend_remove_event_callback(ds_frontend_event, data);
+		context->clear_on_transition = clear_on_transition;
+	}
 	context->max_undo = (uint32_t)obs_data_get_int(settings, "max_undo");
 	context->size.x = (float)obs_data_get_int(settings, "width");
 	context->size.y = (float)obs_data_get_int(settings, "height");
@@ -725,6 +748,8 @@ static obs_properties_t *ds_get_properties(void *data)
 	obs_properties_add_path(props, "cursor_file", obs_module_text("CursorFile"), OBS_PATH_FILE, image_filter, NULL);
 
 	obs_properties_add_int(props, "max_undo", obs_module_text("UndoMax"), 1, 10000, 1);
+
+	obs_properties_add_bool(props, "clear_on_scene_transition", obs_module_text("ClearOnSceneTransition"));
 
 	obs_properties_add_button2(props, "clear", obs_module_text("Clear"), clear_property_button, data);
 
