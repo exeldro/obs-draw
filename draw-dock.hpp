@@ -98,6 +98,15 @@ private:
 	static void vendor_request_clear(obs_data_t *request_data, obs_data_t *response_data, void *);
 	static void vendor_request_draw(obs_data_t *request_data, obs_data_t *response_data, void *);
 
+	static bool scene_undo(obs_scene_t *, obs_sceneitem_t *item, void *);
+	static bool scene_redo(obs_scene_t *, obs_sceneitem_t *item, void *);
+	static bool scene_tool(obs_scene_t *, obs_sceneitem_t *item, void *);
+	static bool scene_tool_color(obs_scene_t *, obs_sceneitem_t *item, void *);
+	static bool scene_tool_image(obs_scene_t *, obs_sceneitem_t *item, void *);
+	static bool scene_tool_size(obs_scene_t *, obs_sceneitem_t *item, void *);
+	static bool scene_tool_alpha(obs_scene_t *, obs_sceneitem_t *item, void *);
+	static bool scene_apply_tool(obs_scene_t *, obs_sceneitem_t *item, void *);
+
 protected:
 	virtual void showEvent(QShowEvent *) override;
 	virtual void hideEvent(QHideEvent *) override;
