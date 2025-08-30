@@ -1,37 +1,18 @@
 #include "draw-source.h"
 #include "version.h"
 #include <graphics/image-file.h>
-#include <obs-module.h>
 #include <obs-frontend-api.h>
-
-#if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 1, 0)
+#include <obs-module.h>
 #include <util/deque.h>
-#define circlebuf_peek_front deque_peek_front
-#define circlebuf_peek_back deque_peek_back
-#define circlebuf_push_front deque_push_front
-#define circlebuf_push_back deque_push_back
-#define circlebuf_pop_front deque_pop_front
-#define circlebuf_pop_back deque_pop_back
-#define circlebuf_init deque_init
-#define circlebuf_free deque_free
-#else
-#include <util/circlebuf.h>
-#endif
+
 
 struct draw_source {
 	obs_source_t *source;
 	struct vec2 size;
 
-#if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 1, 0)
 	struct deque undo;
-#else
-	struct circlebuf undo;
-#endif
-#if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 1, 0)
 	struct deque redo;
-#else
-	struct circlebuf redo;
-#endif
+
 	uint32_t max_undo;
 	gs_texrender_t *render_a;
 	gs_texrender_t *render_b;
@@ -114,7 +95,7 @@ static void copy_to_undo(struct draw_source *ds)
 	obs_enter_graphics();
 	while (ds->redo.size) {
 		gs_texrender_t *old;
-		circlebuf_pop_front(&ds->redo, &old, sizeof(old));
+		deque_pop_front(&ds->redo, &old, sizeof(old));
 		gs_texrender_destroy(old);
 	}
 	gs_texrender_t *texrender = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
@@ -129,16 +110,16 @@ static void copy_to_undo(struct draw_source *ds)
 			draw_effect(ds, tex, false);
 		gs_blend_state_pop();
 		gs_texrender_end(texrender);
-		circlebuf_push_back(&ds->undo, &texrender, sizeof(texrender));
+		deque_push_back(&ds->undo, &texrender, sizeof(texrender));
 		if (ds->undo.size > sizeof(texrender) * ds->max_undo) {
-			circlebuf_pop_front(&ds->undo, &texrender, sizeof(texrender));
+			deque_pop_front(&ds->undo, &texrender, sizeof(texrender));
 			gs_texrender_destroy(texrender);
 		}
 	}
 	obs_leave_graphics();
 }
 
-void clear(struct draw_source *ds)
+void draw_clear(struct draw_source *ds)
 {
 	copy_to_undo(ds);
 	obs_enter_graphics();
@@ -157,7 +138,7 @@ void clear_proc_handler(void *data, calldata_t *cd)
 {
 	UNUSED_PARAMETER(cd);
 	struct draw_source *context = data;
-	clear(context);
+	draw_clear(context);
 }
 
 static void apply_tool(struct draw_source *ds);
@@ -198,16 +179,16 @@ void undo(struct draw_source *ds)
 		return;
 
 	gs_texrender_t *texrender;
-	circlebuf_pop_back(&ds->undo, &texrender, sizeof(texrender));
+	deque_pop_back(&ds->undo, &texrender, sizeof(texrender));
 
 	if (ds->render_a_active) {
 		gs_texrender_t *old = ds->render_a;
 		ds->render_a = texrender;
-		circlebuf_push_back(&ds->redo, &old, sizeof(old));
+		deque_push_back(&ds->redo, &old, sizeof(old));
 	} else {
 		gs_texrender_t *old = ds->render_b;
 		ds->render_b = texrender;
-		circlebuf_push_back(&ds->redo, &old, sizeof(old));
+		deque_push_back(&ds->redo, &old, sizeof(old));
 	}
 }
 
@@ -224,16 +205,16 @@ void redo(struct draw_source *ds)
 		return;
 
 	gs_texrender_t *texrender = NULL;
-	circlebuf_pop_back(&ds->redo, &texrender, sizeof(texrender));
+	deque_pop_back(&ds->redo, &texrender, sizeof(texrender));
 
 	if (ds->render_a_active) {
 		gs_texrender_t *old = ds->render_a;
 		ds->render_a = texrender;
-		circlebuf_push_back(&ds->undo, &old, sizeof(old));
+		deque_push_back(&ds->undo, &old, sizeof(old));
 	} else {
 		gs_texrender_t *old = ds->render_b;
 		ds->render_b = texrender;
-		circlebuf_push_back(&ds->undo, &old, sizeof(old));
+		deque_push_back(&ds->undo, &old, sizeof(old));
 	}
 }
 
@@ -366,7 +347,7 @@ static void ds_frontend_event(enum obs_frontend_event event, void *data)
 	struct draw_source *context = data;
 	if (event == OBS_FRONTEND_EVENT_SCENE_CHANGED) {
 		if (context->clear_on_transition) {
-			clear(context);
+			draw_clear(context);
 		}
 	}
 }
@@ -382,16 +363,16 @@ static void ds_destroy(void *data)
 	}
 	while (context->undo.size) {
 		gs_texrender_t *texrender;
-		circlebuf_pop_front(&context->undo, &texrender, sizeof(texrender));
+		deque_pop_front(&context->undo, &texrender, sizeof(texrender));
 		gs_texrender_destroy(texrender);
 	}
-	circlebuf_free(&context->undo);
+	deque_free(&context->undo);
 	while (context->redo.size) {
 		gs_texrender_t *texrender;
-		circlebuf_pop_front(&context->redo, &texrender, sizeof(texrender));
+		deque_pop_front(&context->redo, &texrender, sizeof(texrender));
 		gs_texrender_destroy(texrender);
 	}
-	circlebuf_free(&context->redo);
+	deque_free(&context->redo);
 	if (context->render_a) {
 		if (!graphics) {
 			graphics = true;
@@ -685,7 +666,7 @@ static bool clear_property_button(obs_properties_t *props, obs_property_t *prope
 	UNUSED_PARAMETER(props);
 	UNUSED_PARAMETER(property);
 	struct draw_source *ds = data;
-	clear(ds);
+	draw_clear(ds);
 	return false;
 }
 
