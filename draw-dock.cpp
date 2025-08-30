@@ -36,18 +36,7 @@ bool obs_module_load()
 	const auto main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 	obs_frontend_push_ui_translation(obs_module_get_string);
 	draw_dock = new DrawDock(main_window);
-#if LIBOBS_API_VER >= MAKE_SEMANTIC_VERSION(30, 0, 0)
 	obs_frontend_add_dock_by_id("DrawDock", obs_module_text("DrawDock"), draw_dock);
-#else
-	const auto dock = new QDockWidget(main_window);
-	dock->setObjectName("DrawDock");
-	dock->setWindowTitle(QString::fromUtf8(obs_module_text("DrawDock")));
-	dock->setWidget(draw_dock);
-	dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
-	dock->setFloating(true);
-	dock->hide();
-	obs_frontend_add_dock(dock);
-#endif
 	obs_frontend_pop_ui_translation();
 
 	return true;
