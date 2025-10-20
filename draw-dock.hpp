@@ -5,6 +5,7 @@
 #include <QComboBox>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QFrame>
 #include <QMouseEvent>
 #include <QToolBar>
 
@@ -22,7 +23,7 @@ public:
 	EventFilterFunc filter;
 };
 
-class DrawDock : public QWidget {
+class DrawDock : public QFrame {
 	Q_OBJECT
 private:
 	OBSEventFilter *eventFilter;
@@ -37,6 +38,7 @@ private:
 	QComboBox *toolCombo;
 	QAction *colorAction;
 	QAction *imageAction;
+	QAction *clearAction;
 	QDoubleSpinBox *toolSizeSpin;
 	QDoubleSpinBox *alphaSpin;
 	QCheckBox *eraseCheckbox;

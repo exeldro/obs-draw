@@ -189,7 +189,7 @@ void SetAlwaysOnTop(QWidget *window, bool enable)
 }
 #endif
 
-DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventFilter()), preview(new OBSQTDisplay(this))
+DrawDock::DrawDock(QWidget *_parent) : QFrame(_parent), eventFilter(BuildEventFilter()), preview(new OBSQTDisplay(this))
 {
 	auto ml = new QVBoxLayout(this);
 	ml->setContentsMargins(0, 0, 0, 0);
@@ -772,7 +772,13 @@ DrawDock::DrawDock(QWidget *_parent) : QWidget(_parent), eventFilter(BuildEventF
 #endif
 
 	toolbar->addSeparator();
-	toolbar->addAction(QString::fromUtf8(obs_module_text("Clear")), [this] { ClearDraw(); });
+	clearAction = toolbar->addAction(QString::fromUtf8(obs_module_text("Clear")), [this] { ClearDraw(); });
+
+	// Set object names for theming support
+	if (auto *colorButton = toolbar->widgetForAction(colorAction))
+		colorButton->setObjectName(QStringLiteral("drawColorButton"));
+	if (auto *clearButton = toolbar->widgetForAction(clearAction))
+		clearButton->setObjectName(QStringLiteral("drawClearButton"));
 
 	preview->setObjectName(QStringLiteral("preview"));
 	preview->setMinimumSize(QSize(24, 24));
