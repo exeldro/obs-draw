@@ -357,12 +357,12 @@ DrawDock::DrawDock(QWidget *_parent) : QFrame(_parent), eventFilter(BuildEventFi
 		});
 		a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("CursorCustomSize")));
 		a->setCheckable(true);
-		a->setChecked(obs_data_get_bool(settings, "custom_cursor_size"));
+		a->setChecked(obs_data_get_bool(settings, "cursor_custom_size"));
 		connect(a, &QAction::triggered, [this, a] {
 			if (!draw_source)
 				return;
 			obs_data_t *settings = obs_data_create();
-			obs_data_set_bool(settings, "custom_cursor_size", a->isChecked());
+			obs_data_set_bool(settings, "cursor_custom_size", a->isChecked());
 			obs_source_update(draw_source, settings);
 			obs_data_release(settings);
 		});

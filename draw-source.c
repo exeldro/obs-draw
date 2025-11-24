@@ -751,7 +751,7 @@ static void ds_get_defaults(obs_data_t *settings)
 	obs_data_set_default_int(settings, "tool_color", 0xFF0000FF);
 	obs_data_set_default_double(settings, "tool_alpha", 100.0);
 	obs_data_set_default_bool(settings, "show_cursor", true);
-	obs_data_set_default_bool(settings, "custom_cursor_size", true);
+	obs_data_set_default_bool(settings, "cursor_custom_size", true);
 	obs_data_set_default_double(settings, "cursor_size", 10);
 	obs_data_set_default_int(settings, "max_undo", 10);
 }
