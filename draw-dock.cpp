@@ -321,6 +321,35 @@ DrawDock::DrawDock(QWidget *_parent) : QFrame(_parent), eventFilter(BuildEventFi
 			obs_source_update(draw_source, settings);
 			obs_data_release(settings);
 		});
+		a = cursorMenu->addAction(QString::fromUtf8(obs_module_text("CursorHide")));
+		a->setCheckable(true);
+		a->setChecked(obs_data_get_bool(settings, "cursor_hide"));
+		connect(a, &QAction::triggered, [this, a] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_bool(settings, "cursor_hide", a->isChecked());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+		auto wa = new QWidgetAction(cursorMenu);
+		auto cursorHide = new QDoubleSpinBox();
+		cursorHide->setSuffix("s");
+		cursorHide->setValue(obs_data_get_double(settings, "cursor_hide_time"));
+		cursorHide->setRange(0.0, 100.0);
+		cursorHide->setEnabled(a->isChecked());
+		wa->setDefaultWidget(cursorHide);
+		cursorMenu->addAction(wa);
+
+		connect(cursorHide, &QDoubleSpinBox::valueChanged, [this, cursorHide] {
+			if (!draw_source)
+				return;
+			obs_data_t *settings = obs_data_create();
+			obs_data_set_double(settings, "cursor_hide_time", cursorHide->value());
+			obs_source_update(draw_source, settings);
+			obs_data_release(settings);
+		});
+
 		cursorMenu->addAction(QString::fromUtf8(obs_module_text("Color")), [this] {
 			if (!draw_source)
 				return;
@@ -366,7 +395,7 @@ DrawDock::DrawDock(QWidget *_parent) : QFrame(_parent), eventFilter(BuildEventFi
 			obs_source_update(draw_source, settings);
 			obs_data_release(settings);
 		});
-		auto wa = new QWidgetAction(cursorMenu);
+		wa = new QWidgetAction(cursorMenu);
 		auto cursorSize = new QDoubleSpinBox();
 		cursorSize->setSuffix("px");
 		cursorSize->setValue(obs_data_get_double(settings, "cursor_size"));

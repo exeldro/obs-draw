@@ -5,7 +5,6 @@
 #include <obs-module.h>
 #include <util/deque.h>
 
-
 struct draw_source {
 	obs_source_t *source;
 	struct vec2 size;
@@ -56,10 +55,12 @@ struct draw_source {
 
 	struct vec4 cursor_color;
 	float cursor_size;
+	float cursor_hide;
 	char *cursor_image_path;
 	gs_image_file4_t *cursor_image;
 	uint64_t last_tick;
 	bool clear_on_transition;
+	float since_last_move;
 };
 
 const char *ds_get_name(void *data)
@@ -75,7 +76,9 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 	gs_effect_set_vec2(ds->uv_mouse_previous_param, &ds->mouse_previous_pos);
 	gs_effect_set_vec2(ds->select_from_param, &ds->select_from);
 	gs_effect_set_vec2(ds->select_to_param, &ds->select_to);
-	gs_effect_set_int(ds->draw_cursor_param, mouse ? (ds->cursor_image ? 2 : 1) : 0);
+	gs_effect_set_int(ds->draw_cursor_param, (mouse && (ds->cursor_hide <= 0.0f || ds->since_last_move < ds->cursor_hide))
+							 ? (ds->cursor_image ? 2 : 1)
+							 : 0);
 	gs_effect_set_vec4(ds->cursor_color_param, &ds->cursor_color);
 	gs_effect_set_float(ds->cursor_size_param, ds->cursor_size);
 	gs_effect_set_texture(ds->cursor_image_param, ds->cursor_image ? ds->cursor_image->image3.image2.image.texture : NULL);
@@ -244,10 +247,9 @@ void tablet_proc_handler(void *data, calldata_t *cd)
 	ds->mouse_active = pressure > 0.0;
 	ds->shift_down = false; //((event->modifiers & INTERACT_SHIFT_KEY) == INTERACT_SHIFT_KEY);
 
-	ds->tablet_factor = draw?(float)pressure:1.0f;
+	ds->tablet_factor = draw ? (float)pressure : 1.0f;
 	if (ds->mouse_active && ds->tool_mode != TOOL_UP && draw) {
 		apply_tool(ds);
-
 	}
 
 	if (pressure > 0.0) {
@@ -464,6 +466,7 @@ static void apply_tool(struct draw_source *ds)
 static void ds_mouse_move(void *data, const struct obs_mouse_event *event, bool mouse_leave)
 {
 	struct draw_source *ds = data;
+	ds->since_last_move = 0.0f;
 	//if (context->pen_down && (context->mouse_x != event->x || context->mouse_y != event->y)) {
 	//}
 	if (!mouse_leave && draw_on_mouse_move(ds->tool)) {
@@ -486,6 +489,7 @@ void ds_mouse_click(void *data, const struct obs_mouse_event *event, int32_t typ
 {
 	UNUSED_PARAMETER(click_count);
 	struct draw_source *context = data;
+	context->since_last_move = 0.0f;
 
 	context->mouse_pos.x = (float)event->x;
 	context->mouse_pos.y = (float)event->y;
@@ -559,7 +563,7 @@ static void ds_update(void *data, obs_data_t *settings)
 	if (clear_on_transition && !context->clear_on_transition) {
 		obs_frontend_add_event_callback(ds_frontend_event, data);
 		context->clear_on_transition = clear_on_transition;
-	} else if (!clear_on_transition && context->clear_on_transition){
+	} else if (!clear_on_transition && context->clear_on_transition) {
 		obs_frontend_remove_event_callback(ds_frontend_event, data);
 		context->clear_on_transition = clear_on_transition;
 	}
@@ -568,7 +572,10 @@ static void ds_update(void *data, obs_data_t *settings)
 	context->size.y = (float)obs_data_get_int(settings, "height");
 	context->tool = (uint32_t)obs_data_get_int(settings, "tool");
 	context->show_mouse = obs_data_get_bool(settings, "show_cursor");
-	context->cursor_size = obs_data_get_bool(settings, "cursor_custom_size") ? (float)obs_data_get_double(settings, "cursor_size") : 0.0f;
+	context->cursor_size =
+		obs_data_get_bool(settings, "cursor_custom_size") ? (float)obs_data_get_double(settings, "cursor_size") : -1.0f;
+	context->cursor_hide = obs_data_get_bool(settings, "cursor_hide") ? (float)obs_data_get_double(settings, "cursor_hide_time")
+									  : 0.0f;
 	vec4_from_rgba(&context->cursor_color, (uint32_t)obs_data_get_int(settings, "cursor_color"));
 	context->cursor_color.w = 1.0f;
 	vec4_from_rgba(&context->tool_color, (uint32_t)obs_data_get_int(settings, "tool_color"));
@@ -694,8 +701,10 @@ static obs_properties_t *ds_get_properties(void *data)
 
 	obs_properties_add_int(props, "width", obs_module_text("Width"), 10, 10000, 1);
 	obs_properties_add_int(props, "height", obs_module_text("Height"), 10, 10000, 1);
+	obs_properties_t *tool = obs_properties_create();
+
 	obs_property_t *p =
-		obs_properties_add_list(props, "tool", obs_module_text("Tool"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
+		obs_properties_add_list(tool, "tool", obs_module_text("Tool"), OBS_COMBO_TYPE_LIST, OBS_COMBO_FORMAT_INT);
 	obs_property_list_add_int(p, obs_module_text("None"), TOOL_NONE);
 	obs_property_list_add_int(p, obs_module_text("Pencil"), TOOL_PENCIL);
 	obs_property_list_add_int(p, obs_module_text("Brush"), TOOL_BRUSH);
@@ -709,24 +718,37 @@ static obs_properties_t *ds_get_properties(void *data)
 	obs_property_list_add_int(p, obs_module_text("Stamp"), TOOL_STAMP);
 	obs_property_list_add_int(p, obs_module_text("Image"), TOOL_IMAGE);
 
-	obs_properties_add_path(props, "tool_image_file", obs_module_text("ToolImageFile"), OBS_PATH_FILE, image_filter, NULL);
+	obs_properties_add_path(tool, "tool_image_file", obs_module_text("ToolImageFile"), OBS_PATH_FILE, image_filter, NULL);
 
-	obs_properties_add_color(props, "tool_color", obs_module_text("ToolColor"));
-	p = obs_properties_add_float_slider(props, "tool_alpha", obs_module_text("ToolAlpha"), -100.0, 100.0, 0.1);
+	obs_properties_add_color(tool, "tool_color", obs_module_text("ToolColor"));
+	p = obs_properties_add_float_slider(tool, "tool_alpha", obs_module_text("ToolAlpha"), -100.0, 100.0, 0.1);
 	obs_property_float_set_suffix(p, "%");
-	p = obs_properties_add_float_slider(props, "tool_size", obs_module_text("ToolSize"), 0.0, 100.0, 0.1);
+	p = obs_properties_add_float_slider(tool, "tool_size", obs_module_text("ToolSize"), 0.0, 100.0, 0.1);
 	obs_property_float_set_suffix(p, "px");
 
-	obs_properties_add_color(props, "cursor_color", obs_module_text("CursorColor"));
+	obs_properties_add_group(props, "tool_group", obs_module_text("Tool"), OBS_GROUP_NORMAL, tool);
 
 	obs_properties_t *cursor = obs_properties_create();
 
-	p = obs_properties_add_float_slider(cursor, "cursor_size", obs_module_text("CursorSize"), 0.0, 100.0, 0.1);
+	obs_properties_add_color(cursor, "cursor_color", obs_module_text("CursorColor"));
+
+	obs_properties_t *cursor_size = obs_properties_create();
+
+	p = obs_properties_add_float_slider(cursor_size, "cursor_size", obs_module_text("CursorSize"), 0.0, 100.0, 0.1);
 	obs_property_float_set_suffix(p, "px");
 
-	obs_properties_add_group(props, "cursor_custom_size", obs_module_text("CursorCustomSize"), OBS_GROUP_CHECKABLE, cursor);
+	obs_properties_add_group(cursor, "cursor_custom_size", obs_module_text("CursorCustomSize"), OBS_GROUP_CHECKABLE,
+				 cursor_size);
 
-	obs_properties_add_path(props, "cursor_file", obs_module_text("CursorFile"), OBS_PATH_FILE, image_filter, NULL);
+	obs_properties_add_path(cursor, "cursor_file", obs_module_text("CursorFile"), OBS_PATH_FILE, image_filter, NULL);
+
+	obs_properties_t *cursor_hide = obs_properties_create();
+	p = obs_properties_add_float_slider(cursor_hide, "cursor_hide_time", obs_module_text("CursorTime"), 0.0, 100.0, 0.1);
+	obs_property_float_set_suffix(p, "s");
+
+	obs_properties_add_group(cursor, "cursor_hide", obs_module_text("CursorHide"), OBS_GROUP_CHECKABLE, cursor_hide);
+
+	obs_properties_add_group(props, "show_cursor", obs_module_text("Cursor"), OBS_GROUP_CHECKABLE, cursor);
 
 	obs_properties_add_int(props, "max_undo", obs_module_text("UndoMax"), 1, 10000, 1);
 
@@ -752,14 +774,15 @@ static void ds_get_defaults(obs_data_t *settings)
 	obs_data_set_default_double(settings, "tool_alpha", 100.0);
 	obs_data_set_default_bool(settings, "show_cursor", true);
 	obs_data_set_default_bool(settings, "cursor_custom_size", true);
-	obs_data_set_default_double(settings, "cursor_size", 10);
+	obs_data_set_default_double(settings, "cursor_size", 10.0);
 	obs_data_set_default_int(settings, "max_undo", 10);
+	obs_data_set_default_double(settings, "cursor_hide_time", 0.5);
 }
 
 static void ds_video_tick(void *data, float seconds)
 {
-	UNUSED_PARAMETER(seconds);
 	struct draw_source *ds = data;
+	ds->since_last_move += seconds;
 
 	uint64_t frame_time = obs_get_video_frame_time();
 
