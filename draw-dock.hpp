@@ -60,7 +60,7 @@ private:
 	bool prevFloating;
 	Qt::DockWidgetArea prevArea;
 
-	void *vendor;
+	void *vendor = nullptr;
 
 	bool GetSourceRelativeXY(int mouseX, int mouseY, int &x, int &y);
 
