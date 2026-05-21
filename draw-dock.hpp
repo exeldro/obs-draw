@@ -92,6 +92,7 @@ private:
 	static void draw_source_update(void *data, calldata_t *cd);
 	static void draw_source_destroy(void *data, calldata_t *cd);
 	static void source_create(void *data, calldata_t *cd);
+	static void video_reset(void *data, calldata_t *cd);
 	static void clear_hotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
 	static bool show_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed);
 	static bool hide_hotkey(void *data, obs_hotkey_pair_id id, obs_hotkey_t *hotkey, bool pressed);

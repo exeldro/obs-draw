@@ -214,6 +214,7 @@ DrawDock::DrawDock(QWidget *_parent) : QFrame(_parent), eventFilter(BuildEventFi
 
 	signal_handler_t *sh = obs_get_signal_handler();
 	signal_handler_connect(sh, "source_create", source_create, this);
+	signal_handler_connect(sh, "video_reset", video_reset, this);
 
 	toolbar = new QToolBar();
 	ml->addWidget(toolbar);
@@ -875,39 +876,23 @@ static inline void GetScaleAndCenterPos(int baseCX, int baseCY, int windowCX, in
 	y = windowCY / 2 - newCY / 2;
 }
 
-static inline bool GetMainCanvasSize(uint32_t &cx, uint32_t &cy)
-{
-	struct obs_video_info ovi = {};
-	if (obs_get_video_info(&ovi) && ovi.base_width > 0 && ovi.base_height > 0) {
-		cx = ovi.base_width;
-		cy = ovi.base_height;
-		return true;
-	}
-
-	cx = 1;
-	cy = 1;
-	return false;
-}
-
 void DrawDock::DrawPreview(void *data, uint32_t cx, uint32_t cy)
 {
 	DrawDock *window = static_cast<DrawDock *>(data);
 	if (!window)
 		return;
 
-	gs_texture_t *tex = obs_get_main_texture();
-	if (!tex)
-		return;
+	gs_viewport_push();
+	gs_projection_push();
 
-	uint32_t sourceCX, sourceCY;
-	if (!GetMainCanvasSize(sourceCX, sourceCY)) {
-		sourceCX = gs_texture_get_width(tex);
-		if (sourceCX <= 0)
-			sourceCX = 1;
-		sourceCY = gs_texture_get_height(tex);
-		if (sourceCY <= 0)
-			sourceCY = 1;
-	}
+	gs_texture_t *tex = obs_get_main_texture();
+
+	uint32_t sourceCX = gs_texture_get_width(tex);
+	if (sourceCX <= 0)
+		sourceCX = 1;
+	uint32_t sourceCY = gs_texture_get_height(tex);
+	if (sourceCY <= 0)
+		sourceCY = 1;
 
 	int x, y;
 	float scale;
@@ -943,22 +928,19 @@ void DrawDock::DrawPreview(void *data, uint32_t cx, uint32_t cy)
 
 bool DrawDock::GetSourceRelativeXY(int mouseX, int mouseY, int &relX, int &relY)
 {
-	float pixelRatio = preview->devicePixelRatioF();
+	float pixelRatio = devicePixelRatioF();
 
 	int mouseXscaled = (int)roundf(mouseX * pixelRatio);
 	int mouseYscaled = (int)roundf(mouseY * pixelRatio);
 
 	QSize size = preview->size() * preview->devicePixelRatioF();
 
-	uint32_t sourceCX, sourceCY;
-	if (!GetMainCanvasSize(sourceCX, sourceCY)) {
-		sourceCX = draw_source ? obs_source_get_width(draw_source) : 1;
-		if (sourceCX <= 0)
-			sourceCX = 1;
-		sourceCY = draw_source ? obs_source_get_height(draw_source) : 1;
-		if (sourceCY <= 0)
-			sourceCY = 1;
-	}
+	uint32_t sourceCX = draw_source ? obs_source_get_width(draw_source) : 1;
+	if (sourceCX <= 0)
+		sourceCX = 1;
+	uint32_t sourceCY = draw_source ? obs_source_get_height(draw_source) : 1;
+	if (sourceCY <= 0)
+		sourceCY = 1;
 
 	int x, y;
 	float scale;
@@ -973,17 +955,19 @@ bool DrawDock::GetSourceRelativeXY(int mouseX, int mouseY, int &relX, int &relY)
 
 	scale *= zoom;
 
-	float relXf = (float(mouseXscaled) - float(x) + extraCx * scrollX) / scale;
-	float relYf = (float(mouseYscaled) - float(y) + extraCy * scrollY) / scale;
+	if (x > 0) {
+		relX = int(float(mouseXscaled - x + extraCx * scrollX) / scale);
+		relY = int(float(mouseYscaled + extraCy * scrollY) / scale);
+	} else {
+		relX = int(float(mouseXscaled + extraCx * scrollX) / scale);
+		relY = int(float(mouseYscaled - y + extraCy * scrollY) / scale);
+	}
 
 	// Confirm mouse is inside the source
-	if (relXf < 0.0f || relXf > float(sourceCX))
+	if (relX < 0 || relX > int(sourceCX))
 		return false;
-	if (relYf < 0.0f || relYf > float(sourceCY))
+	if (relY < 0 || relY > int(sourceCY))
 		return false;
-
-	relX = int(relXf);
-	relY = int(relYf);
 
 	return true;
 }
@@ -1630,15 +1614,9 @@ void DrawDock::CreateDrawSource(obs_source_t *new_source)
 			obs_data_set_int(settings, "height", 1080);
 		}
 	}
-	uint32_t canvasCX, canvasCY;
-	if (GetMainCanvasSize(canvasCX, canvasCY)) {
-		obs_data_set_int(settings, "width", canvasCX);
-		obs_data_set_int(settings, "height", canvasCY);
-	} else if (scene) {
+	if (scene) {
 		obs_data_set_int(settings, "width", obs_source_get_base_width(scene));
 		obs_data_set_int(settings, "height", obs_source_get_base_height(scene));
-	}
-	if (scene) {
 		obs_source_release(scene);
 	}
 	if (!draw_source) {
@@ -1820,6 +1798,31 @@ void DrawDock::source_create(void *data, calldata_t *cd)
 	if (strcmp(obs_source_get_name(source), "Global Draw Source") != 0)
 		return;
 	window->CreateDrawSource(source);
+}
+
+void DrawDock::video_reset(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(cd);
+	DrawDock *window = static_cast<DrawDock *>(data);
+	if (!window || !window->draw_source)
+		return;
+
+	struct obs_video_info ovi = {};
+	if (!obs_get_video_info(&ovi) || ovi.base_width == 0 || ovi.base_height == 0)
+		return;
+
+	if (obs_source_get_width(window->draw_source) == ovi.base_width &&
+	    obs_source_get_height(window->draw_source) == ovi.base_height)
+		return;
+
+	obs_data_t *settings = obs_source_get_settings(window->draw_source);
+	if (!settings)
+		return;
+
+	obs_data_set_int(settings, "width", ovi.base_width);
+	obs_data_set_int(settings, "height", ovi.base_height);
+	obs_source_update(window->draw_source, settings);
+	obs_data_release(settings);
 }
 
 void DrawDock::DrawSourceUpdate()
