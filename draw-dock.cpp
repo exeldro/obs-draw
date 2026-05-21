@@ -214,6 +214,7 @@ DrawDock::DrawDock(QWidget *_parent) : QFrame(_parent), eventFilter(BuildEventFi
 
 	signal_handler_t *sh = obs_get_signal_handler();
 	signal_handler_connect(sh, "source_create", source_create, this);
+	signal_handler_connect(sh, "video_reset", video_reset, this);
 
 	toolbar = new QToolBar();
 	ml->addWidget(toolbar);
@@ -1797,6 +1798,31 @@ void DrawDock::source_create(void *data, calldata_t *cd)
 	if (strcmp(obs_source_get_name(source), "Global Draw Source") != 0)
 		return;
 	window->CreateDrawSource(source);
+}
+
+void DrawDock::video_reset(void *data, calldata_t *cd)
+{
+	UNUSED_PARAMETER(cd);
+	DrawDock *window = static_cast<DrawDock *>(data);
+	if (!window || !window->draw_source)
+		return;
+
+	struct obs_video_info ovi = {};
+	if (!obs_get_video_info(&ovi) || ovi.base_width == 0 || ovi.base_height == 0)
+		return;
+
+	if (obs_source_get_width(window->draw_source) == ovi.base_width &&
+	    obs_source_get_height(window->draw_source) == ovi.base_height)
+		return;
+
+	obs_data_t *settings = obs_source_get_settings(window->draw_source);
+	if (!settings)
+		return;
+
+	obs_data_set_int(settings, "width", ovi.base_width);
+	obs_data_set_int(settings, "height", ovi.base_height);
+	obs_source_update(window->draw_source, settings);
+	obs_data_release(settings);
 }
 
 void DrawDock::DrawSourceUpdate()
