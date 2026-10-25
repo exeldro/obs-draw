@@ -1,0 +1,16 @@
+{
+    "display_name": "Draw",
+    "id": "172dd99a-684e-4247-83cd-1b7235892a86",
+    "version": "0.3.3",
+    "authors": ["Exeldro"],
+    "name": "draw-dock",
+    "description": "Draw on your stream.",
+    "long_description": "The Draw plugin for OBS Studio allows you to draw on your stream output in a dock.",
+    "urls": {
+        "repository": "https://github.com/exeldro/obs-draw",
+        "website": "https://obsproject.com/forum/resources/draw.2081/",
+        "support": "https://obsproject.com/forum/threads/draw.183740/"
+    },
+    "has_banner": false,
+    "has_icon": false
+}
