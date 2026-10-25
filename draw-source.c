@@ -4,6 +4,14 @@
 #include <obs-frontend-api.h>
 #include <obs-module.h>
 #include <util/deque.h>
+#include <util/platform.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#include <sys/time.h>
+#endif
 
 struct draw_source {
 	obs_source_t *source;
@@ -48,7 +56,7 @@ struct draw_source {
 
 	uint32_t tool;
 	char *tool_image_path;
-	gs_image_file4_t *tool_image;
+	struct image_file *tool_image;
 	struct vec4 tool_color;
 	float tool_size;
 	float tablet_factor;
@@ -57,11 +65,65 @@ struct draw_source {
 	float cursor_size;
 	float cursor_hide;
 	char *cursor_image_path;
-	gs_image_file4_t *cursor_image;
+	struct image_file *cursor_image;
 	uint64_t last_tick;
 	bool clear_on_transition;
 	float since_last_move;
 };
+
+struct image_file {
+	gs_texture_t *texture;
+	enum gs_color_format format;
+	uint32_t cx;
+	uint32_t cy;
+	bool is_animated_gif;
+	bool frame_updated;
+	bool loaded;
+};
+
+void *(*gs_image_file_create_func)() = NULL;
+void (*gs_image_file_free_func)(struct image_file *image) = NULL;
+void (*gs_image_file_init_func)(struct image_file *image, const char *file, enum gs_image_alpha_mode alpha_mode) = NULL;
+void (*gs_image_file_init_texture_func)(struct image_file *image) = NULL;
+bool (*gs_image_file_tick_func)(struct image_file *image, uint64_t elapsed_time_ns) = NULL;
+void (*gs_image_file_update_texture_func)(struct image_file *image) = NULL;
+
+void *gs_image_file4_create()
+{
+	return bzalloc(41336); //sizeof(gs_image_file4_t)
+}
+
+void *gs_image_file_ex_create()
+{
+	return bzalloc(72); //sizeof(gs_image_file_ex_t));
+}
+
+void load_gs_image_functions()
+{
+#ifdef _WIN32
+	void *dl = os_dlopen("obs");
+#else
+	void *dl = dlopen(NULL, RTLD_LAZY);
+#endif
+	if (dl) {
+		if (obs_get_version() >= MAKE_SEMANTIC_VERSION(33, 0, 0)) {
+			gs_image_file_create_func = gs_image_file_ex_create;
+			gs_image_file_free_func = os_dlsym(dl, "gs_image_file_ex_free");
+			gs_image_file_init_func = os_dlsym(dl, "gs_image_file_ex_init");
+			gs_image_file_init_texture_func = os_dlsym(dl, "gs_image_file_ex_init_texture");
+			gs_image_file_tick_func = os_dlsym(dl, "gs_image_file_ex_tick");
+			gs_image_file_update_texture_func = os_dlsym(dl, "gs_image_file_ex_update_texture");
+		} else {
+			gs_image_file_create_func = gs_image_file4_create;
+			gs_image_file_free_func = os_dlsym(dl, "gs_image_file4_free");
+			gs_image_file_init_func = os_dlsym(dl, "gs_image_file4_init");
+			gs_image_file_init_texture_func = os_dlsym(dl, "gs_image_file4_init_texture");
+			gs_image_file_tick_func = os_dlsym(dl, "gs_image_file4_tick");
+			gs_image_file_update_texture_func = os_dlsym(dl, "gs_image_file4_update_texture");
+		}
+		os_dlclose(dl);
+	}
+}
 
 const char *ds_get_name(void *data)
 {
@@ -81,9 +143,9 @@ static void draw_effect(struct draw_source *ds, gs_texture_t *tex, bool mouse)
 							 : 0);
 	gs_effect_set_vec4(ds->cursor_color_param, &ds->cursor_color);
 	gs_effect_set_float(ds->cursor_size_param, ds->cursor_size);
-	gs_effect_set_texture(ds->cursor_image_param, ds->cursor_image ? ds->cursor_image->image3.image2.image.texture : NULL);
+	gs_effect_set_texture(ds->cursor_image_param, ds->cursor_image ? ds->cursor_image->texture : NULL);
 	gs_effect_set_int(ds->tool_param, ds->tool);
-	gs_effect_set_texture(ds->tool_image_param, ds->tool_image ? ds->tool_image->image3.image2.image.texture : NULL);
+	gs_effect_set_texture(ds->tool_image_param, ds->tool_image ? ds->tool_image->texture : NULL);
 	gs_effect_set_vec4(ds->tool_color_param, &ds->tool_color);
 	gs_effect_set_float(ds->tool_size_param, ds->tool_size * ds->tablet_factor);
 	gs_effect_set_int(ds->tool_mode_param, ds->tool_mode);
@@ -394,7 +456,7 @@ static void ds_destroy(void *data)
 			graphics = true;
 			obs_enter_graphics();
 		}
-		gs_image_file4_free(context->tool_image);
+		gs_image_file_free_func(context->tool_image);
 		bfree(context->tool_image);
 	}
 	if (context->cursor_image) {
@@ -402,7 +464,7 @@ static void ds_destroy(void *data)
 			graphics = true;
 			obs_enter_graphics();
 		}
-		gs_image_file4_free(context->cursor_image);
+		gs_image_file_free_func(context->cursor_image);
 		bfree(context->cursor_image);
 	}
 	if (graphics)
@@ -610,23 +672,29 @@ static void ds_update(void *data, obs_data_t *settings)
 				bfree(context->cursor_image_path);
 			context->cursor_image_path = bstrdup(cursor_image_path);
 			if (!context->cursor_image) {
-				context->cursor_image = bzalloc(sizeof(gs_image_file4_t));
+				if (gs_image_file_create_func)
+					context->cursor_image = gs_image_file_create_func();
 			} else {
 				obs_enter_graphics();
-				gs_image_file4_free(context->cursor_image);
+				gs_image_file_free_func(context->cursor_image);
 				obs_leave_graphics();
 			}
-			gs_image_file4_init(context->cursor_image, cursor_image_path, GS_IMAGE_ALPHA_PREMULTIPLY_SRGB);
+			if (gs_image_file_init_func)
+				gs_image_file_init_func(context->cursor_image, cursor_image_path, GS_IMAGE_ALPHA_PREMULTIPLY_SRGB);
 			// : GS_IMAGE_ALPHA_PREMULTIPLY);
 
-			obs_enter_graphics();
-			gs_image_file4_init_texture(context->cursor_image);
-			obs_leave_graphics();
+			if (gs_image_file_init_texture_func) {
+				obs_enter_graphics();
+				gs_image_file_init_texture_func(context->cursor_image);
+				obs_leave_graphics();
+			}
 		}
 	} else if (context->cursor_image) {
-		obs_enter_graphics();
-		gs_image_file4_free(context->cursor_image);
-		obs_leave_graphics();
+		if (gs_image_file_free_func) {
+			obs_enter_graphics();
+			gs_image_file_free_func(context->cursor_image);
+			obs_leave_graphics();
+		}
 		bfree(context->cursor_image);
 		context->cursor_image = NULL;
 		if (context->cursor_image_path) {
@@ -642,23 +710,29 @@ static void ds_update(void *data, obs_data_t *settings)
 				bfree(context->tool_image_path);
 			context->tool_image_path = bstrdup(tool_image_path);
 			if (!context->tool_image) {
-				context->tool_image = bzalloc(sizeof(gs_image_file4_t));
-			} else {
+				if (gs_image_file_create_func)
+					context->tool_image = gs_image_file_create_func();
+			} else if (gs_image_file_free_func) {
 				obs_enter_graphics();
-				gs_image_file4_free(context->tool_image);
+				gs_image_file_free_func(context->tool_image);
 				obs_leave_graphics();
 			}
-			gs_image_file4_init(context->tool_image, tool_image_path, GS_IMAGE_ALPHA_PREMULTIPLY_SRGB);
+			if (gs_image_file_init_func)
+				gs_image_file_init_func(context->tool_image, tool_image_path, GS_IMAGE_ALPHA_PREMULTIPLY_SRGB);
 			// : GS_IMAGE_ALPHA_PREMULTIPLY);
 
-			obs_enter_graphics();
-			gs_image_file4_init_texture(context->tool_image);
-			obs_leave_graphics();
+			if (gs_image_file_init_texture_func) {
+				obs_enter_graphics();
+				gs_image_file_init_texture_func(context->tool_image);
+				obs_leave_graphics();
+			}
 		}
 	} else if (context->tool_image) {
-		obs_enter_graphics();
-		gs_image_file4_free(context->tool_image);
-		obs_leave_graphics();
+		if (gs_image_file_free_func) {
+			obs_enter_graphics();
+			gs_image_file_free_func(context->tool_image);
+			obs_leave_graphics();
+		}
 		bfree(context->tool_image);
 		context->tool_image = NULL;
 		if (context->tool_image_path) {
@@ -786,11 +860,12 @@ static void ds_video_tick(void *data, float seconds)
 
 	uint64_t frame_time = obs_get_video_frame_time();
 
-	if (ds->last_tick && ds->cursor_image && ds->cursor_image->image3.image2.image.is_animated_gif) {
+	if (ds->last_tick && ds->cursor_image && ds->cursor_image->is_animated_gif) {
 		uint64_t elapsed = frame_time - ds->last_tick;
-		if (gs_image_file4_tick(ds->cursor_image, elapsed)) {
+		if (gs_image_file_tick_func && gs_image_file_tick_func(ds->cursor_image, elapsed) &&
+		    gs_image_file_update_texture_func) {
 			obs_enter_graphics();
-			gs_image_file4_update_texture(ds->cursor_image);
+			gs_image_file_update_texture_func(ds->cursor_image);
 			obs_leave_graphics();
 		}
 	}
